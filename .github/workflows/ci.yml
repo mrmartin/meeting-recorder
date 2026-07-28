@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GTK/GStreamer bindings (app import check)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q python3-gi gir1.2-gtk-3.0 \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good
+      - name: Install test dependencies
+        run: python3 -m pip install rapidfuzz
+      - name: Compile check (all modules)
+        run: |
+          python3 - <<'EOF'
+          import py_compile, pathlib
+          for d in ("meeting_recorder", "transcriber", "tests"):
+              for f in pathlib.Path(d).rglob("*.py"):
+                  py_compile.compile(str(f), doraise=True)
+          print("all modules compile")
+          EOF
+      - name: App imports (GTK + GStreamer + recorder pipeline elements)
+        run: python3 -c "from meeting_recorder import app, recorder, storage, devices; print('imports OK; gst elements present:', recorder.gst_available())"
+      - name: Transcriber unit tests
+        run: python3 tests/test_transcriber.py
+
+  appimage:
+    name: Build AppImage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"  # no FUSE on CI runners
+        run: packaging/build-appimage.sh
+      - name: Sanity-check result
+        run: |
+          ls -la MeetingRecorder-x86_64.AppImage
+          test "$(stat -c%s MeetingRecorder-x86_64.AppImage)" -gt 500000
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MeetingRecorder-x86_64.AppImage
+          path: MeetingRecorder-x86_64.AppImage
