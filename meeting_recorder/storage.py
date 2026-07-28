@@ -34,6 +34,15 @@ def list_recordings() -> list[Path]:
     return sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)
 
 
+def transcript_path(audio_path: Path) -> Path:
+    """Transcript file that belongs to a recording."""
+    return audio_path.with_name(audio_path.stem + ".transcript.md")
+
+
+def has_transcript(audio_path: Path) -> bool:
+    return transcript_path(audio_path).is_file()
+
+
 def human_size(num_bytes: int) -> str:
     """Format a byte count for display, e.g. '12.4 MB'."""
     size = float(num_bytes)

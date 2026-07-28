@@ -2,11 +2,16 @@
 
 A tiny Linux app that records **both sides of a meeting** — everything your
 computer plays (remote participants) and everything your microphone hears —
-mixed live into a single audio file, ready for transcription.
+into a single audio file, and can **transcribe it locally** with clear
+"Me:" / "Them:" attribution.
 
 - One button: **Record / Stop**, with elapsed timer and live level meters
 - Output: `~/Recordings/meeting_YYYY-MM-DD_HH-MM.ogg`
-  (Ogg/Opus, mono, 48 kHz, speech-optimized, ~14 MB per hour)
+  (Ogg/Opus stereo, left = your mic, right = system audio, ~29 MB per hour)
+- **Transcribe** button per recording: local Whisper (large-v3-turbo via
+  faster-whisper), speaker-attributed Markdown minutes, no cloud
+- Echo-aware: your mic hearing the speakers doesn't duplicate "Them" lines
+  into your side of the transcript
 - Works on PulseAudio **and** PipeWire systems
 - No account, no cloud, no configuration
 
@@ -52,15 +57,34 @@ AppDir, and produces `MeetingRecorder-x86_64.AppImage` in the project root.
 
 ## How it works
 
-A single GStreamer pipeline captures the default output's **monitor source**
-(`@DEFAULT_MONITOR@` — what your speakers play) and the default **microphone**
-(`@DEFAULT_SOURCE@`), mixes them with `audiomixer`, and encodes with `opusenc`
-in voice mode. One pipeline clock means the two streams can't drift apart.
+**Recording.** A single GStreamer pipeline captures the default output's
+**monitor source** (`@DEFAULT_MONITOR@` — what your speakers play) and the
+default **microphone** (`@DEFAULT_SOURCE@`), and interleaves them as the two
+channels of a stereo Opus stream (left = mic, right = system). Keeping the
+sources on separate channels is what makes exact Me/Them transcript
+attribution possible; one pipeline clock means the channels can't drift.
 On stop, the app sends EOS so the Ogg file is finalized and seekable.
 
 If the host's GStreamer lacks the pulse/opus elements, the app falls back to
-two `parecord` processes mixed with `ffmpeg` at stop time (level meters are
+two `parecord` processes joined with `ffmpeg` at stop time (level meters are
 hidden in that mode).
+
+**Transcription.** The `transcriber/` package runs in a dedicated venv
+(`~/.local/share/meeting-recorder/venv`, created on first use, ~3 GB with
+models — CPU-only, no CUDA). Stereo recordings: each channel is transcribed
+separately with faster-whisper, echo of the speakers picked up by the mic is
+removed by text-similarity dedup against the system channel, and the two
+sides are merged into timestamped speaker turns. Legacy mono recordings are
+attributed with pyannote speaker diarization instead (needs a free
+HuggingFace token). Everything is cached under `~/Recordings/.transcribe/`,
+so re-runs and setting tweaks are fast.
+
+CLI (same engine as the button):
+
+```sh
+~/.local/share/meeting-recorder/venv/bin/python -m transcriber \
+    ~/Recordings/meeting_X.ogg [--model large-v3-turbo] [--set merge.turn_gap_s=2.5]
+```
 
 ```
 meeting_recorder/

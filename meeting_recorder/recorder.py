@@ -1,4 +1,12 @@
-"""GStreamer-based recorder: system audio + mic mixed live into one Ogg/Opus file."""
+"""GStreamer-based recorder: mic + system audio as separate stereo channels.
+
+The output is a stereo Ogg/Opus file with LEFT = microphone ("Me") and
+RIGHT = system audio ("Them"). Keeping the sources on separate channels
+(instead of mixing) lets the transcriber attribute speech exactly and
+remove speaker-echo offline, while the file still plays fine anywhere.
+"""
+
+import os
 
 import gi
 
@@ -9,29 +17,58 @@ from . import devices
 
 Gst.init(None)
 
+# NOTE: audiointerleave's parse-launch quirk — the branch feeding sink_0
+# (mic) MUST appear before the sink_1 branch, or linking fails.
 PIPELINE_TEMPLATE = """
-pulsesrc device={monitor} ! queue ! audioconvert ! audioresample
-    ! audio/x-raw,format=S16LE,rate=48000,channels=1
-    ! level name=level_sys interval=100000000 ! mix.
 pulsesrc device={mic} ! queue ! audioconvert ! audioresample
     ! audio/x-raw,format=S16LE,rate=48000,channels=1
-    ! level name=level_mic interval=100000000 ! mix.
-audiomixer name=mix ! audioconvert
-    ! opusenc bitrate=32000 audio-type=voice
+    {mic_aec}
+    ! level name=level_mic interval=100000000 ! inter.sink_0
+pulsesrc device={monitor} ! queue ! audioconvert ! audioresample
+    ! audio/x-raw,format=S16LE,rate=48000,channels=1
+    {sys_probe}
+    ! level name=level_sys interval=100000000 ! inter.sink_1
+audiointerleave name=inter ! audioconvert
+    ! opusenc bitrate=64000 audio-type=voice
     ! oggmux ! filesink location="{path}" buffer-mode=unbuffered
 """
+
+# Optional live AEC (A/B experiments only — never the default: it would
+# bake double-talk artifacts into the only copy of a meeting; offline
+# processing at transcription time is reversible and re-runnable).
+MIC_AEC_FRAGMENT = """
+    ! webrtcdsp probe=aec_probe echo-cancel=true delay-agnostic=true
+        extended-filter=true noise-suppression=false gain-control=false
+        high-pass-filter=false
+"""
+SYS_PROBE_FRAGMENT = "! webrtcechoprobe name=aec_probe"
 
 EOS_TIMEOUT_NS = 3 * Gst.SECOND
 
 
 def gst_available() -> bool:
     """True if all GStreamer elements the pipeline needs are present."""
-    needed = ("pulsesrc", "audiomixer", "opusenc", "oggmux", "level")
+    needed = ("pulsesrc", "audiointerleave", "opusenc", "oggmux", "level")
     return all(Gst.ElementFactory.find(name) for name in needed)
 
 
+def aec_available() -> bool:
+    return all(Gst.ElementFactory.find(n)
+               for n in ("webrtcdsp", "webrtcechoprobe"))
+
+
+def _pipeline_spec(path, live_aec: bool) -> str:
+    return PIPELINE_TEMPLATE.format(
+        mic=devices.DEFAULT_SOURCE,
+        monitor=devices.DEFAULT_MONITOR,
+        path=str(path),
+        mic_aec=MIC_AEC_FRAGMENT if live_aec else "",
+        sys_probe=SYS_PROBE_FRAGMENT if live_aec else "",
+    )
+
+
 class GstRecorder:
-    """Records default-sink monitor + default mic, mixed, to an Ogg/Opus file.
+    """Records default mic (L) + default-sink monitor (R) to Ogg/Opus.
 
     Callbacks (all optional, called on the GLib main loop):
       on_levels(name, peak_db): name is 'sys' or 'mic', peak_db is float dB (<= 0)
@@ -54,12 +91,9 @@ class GstRecorder:
         if self.pipeline:
             raise RuntimeError("already recording")
         self.path = path
-        spec = PIPELINE_TEMPLATE.format(
-            monitor=devices.DEFAULT_MONITOR,
-            mic=devices.DEFAULT_SOURCE,
-            path=str(path),
-        )
-        self.pipeline = Gst.parse_launch(spec)
+        live_aec = (os.environ.get("MEETING_REC_LIVE_AEC") == "1"
+                    and aec_available())
+        self.pipeline = Gst.parse_launch(_pipeline_spec(path, live_aec))
         bus = self.pipeline.get_bus()
         bus.add_signal_watch()
         bus.connect("message", self._on_bus_message)
@@ -98,7 +132,7 @@ class GstRecorder:
 
 
 if __name__ == "__main__":
-    # Headless smoke test: record 5 seconds to /tmp/meeting_test.ogg
+    # Headless smoke test: record 5 seconds of stereo (L=mic, R=system)
     import sys
 
     loop = GLib.MainLoop()
@@ -107,8 +141,8 @@ if __name__ == "__main__":
         on_error=lambda msg: (print("ERROR:", msg, file=sys.stderr), loop.quit()),
     )
     out = "/tmp/meeting_test.ogg"
-    print(f"Recording 5s to {out} (sink: {devices.default_sink()}, "
-          f"mic: {devices.default_source()})")
+    print(f"Recording 5s stereo to {out} (mic=L: {devices.default_source()}, "
+          f"sys=R: {devices.default_sink()})")
     rec.start(out)
 
     def finish():

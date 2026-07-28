@@ -1,8 +1,12 @@
 """Fallback recorder for hosts whose GStreamer lacks pulse/opus elements.
 
-Records mic and system audio with two `parecord` subprocesses, then mixes
-them into one Ogg/Opus file with ffmpeg when the recording stops.
-No live level meters in this mode.
+Records mic and system audio with two `parecord` subprocesses, then joins
+them into one stereo Ogg/Opus file (L=mic, R=system) with ffmpeg when the
+recording stops. No live level meters in this mode.
+
+Known limitation: the two parecord processes start tens of ms apart, so
+the channels carry a small constant offset (no drift — one PipeWire
+clock); the transcriber's alignment step absorbs it.
 """
 
 from __future__ import annotations
@@ -44,10 +48,10 @@ class ParecordRecorder:
                 "--file-format=wav"]
         tmp = Path(self.tmpdir.name)
         self.procs = [
+            subprocess.Popen(base + [str(tmp / "mic.wav")]),
             subprocess.Popen(
                 base + [f"--device={devices.DEFAULT_MONITOR}",
                         str(tmp / "sys.wav")]),
-            subprocess.Popen(base + [str(tmp / "mic.wav")]),
         ]
 
     def stop(self):
@@ -62,15 +66,16 @@ class ParecordRecorder:
             except subprocess.TimeoutExpired:
                 proc.kill()
         tmp = Path(self.tmpdir.name)
-        inputs = [p for p in (tmp / "sys.wav", tmp / "mic.wav") if p.exists()]
+        # Order matters: mic first -> left channel, system second -> right.
+        inputs = [p for p in (tmp / "mic.wav", tmp / "sys.wav") if p.exists()]
         try:
-            self._mix(inputs)
+            self._join(inputs)
         finally:
             self.tmpdir.cleanup()
             self.tmpdir = None
         return self.path
 
-    def _mix(self, inputs):
+    def _join(self, inputs):
         if not inputs:
             if self.on_error:
                 self.on_error("No audio was captured.")
@@ -79,9 +84,15 @@ class ParecordRecorder:
         for src in inputs:
             cmd += ["-i", str(src)]
         if len(inputs) > 1:
+            # Stereo: L=mic ("Me"), R=system ("Them") — same contract as
+            # the GStreamer recorder.
             cmd += ["-filter_complex",
-                    f"amix=inputs={len(inputs)}:duration=longest"]
-        cmd += ["-ac", "1", "-c:a", "libopus", "-b:a", "32k", str(self.path)]
+                    "[0:a][1:a]join=inputs=2:channel_layout=stereo[a]",
+                    "-map", "[a]", "-c:a", "libopus", "-b:a", "64k"]
+        else:
+            # One source survived — degrade to legacy mono format.
+            cmd += ["-ac", "1", "-c:a", "libopus", "-b:a", "32k"]
+        cmd += [str(self.path)]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0 and self.on_error:
             self.on_error(f"Mixing failed:\n{result.stderr.strip()}")

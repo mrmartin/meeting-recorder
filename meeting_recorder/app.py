@@ -9,7 +9,7 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gio, GLib, Gtk
 
-from . import APP_ID, APP_NAME, devices, storage
+from . import APP_ID, APP_NAME, devices, storage, transcribe_launcher
 
 CSS = b"""
 .record-button { font-size: 18px; font-weight: bold; padding: 14px 40px; }
@@ -30,6 +30,10 @@ class MainWindow(Gtk.ApplicationWindow):
         self.start_mark = None
         self.current_path = None
         self.live_size_label = None
+        self.transcribe_job = None
+        self.transcribe_path = None
+        self.transcribe_stage = ""
+        self.transcribe_label = None
         self.set_default_size(360, 480)
         self.connect("delete-event", self.on_delete)
 
@@ -211,6 +215,7 @@ class MainWindow(Gtk.ApplicationWindow):
             size.get_style_context().add_class("dim-label")
             hbox.pack_start(name, True, True, 0)
             hbox.pack_start(size, False, False, 0)
+            self._pack_transcribe_widget(hbox, path)
             row.add(hbox)
             self.listbox.add(row)
         if not recordings and not self.recorder.recording:
@@ -220,6 +225,107 @@ class MainWindow(Gtk.ApplicationWindow):
             row.add(label)
             self.listbox.add(row)
         self.listbox.show_all()
+
+    # ----- transcription -----
+
+    def _pack_transcribe_widget(self, hbox, path):
+        """Per-row widget: open-transcript icon, spinner, or Transcribe."""
+        if self.transcribe_job and path == self.transcribe_path:
+            spinner = Gtk.Spinner()
+            spinner.start()
+            label = Gtk.Label(label=self.transcribe_stage)
+            label.get_style_context().add_class("dim-label")
+            self.transcribe_label = label
+            hbox.pack_start(label, False, False, 0)
+            hbox.pack_start(spinner, False, False, 0)
+            return
+        if storage.has_transcript(path):
+            btn = Gtk.Button.new_from_icon_name(
+                "x-office-document-symbolic", Gtk.IconSize.BUTTON)
+            btn.set_tooltip_text("Open transcript")
+            btn.set_relief(Gtk.ReliefStyle.NONE)
+            btn.connect("clicked", lambda _b: self.launch_uri(
+                storage.transcript_path(path).as_uri()))
+        else:
+            btn = Gtk.Button(label="Transcribe")
+            btn.set_relief(Gtk.ReliefStyle.NONE)
+            btn.connect("clicked", lambda _b: self.start_transcription(path))
+            if self.transcribe_job:
+                btn.set_sensitive(False)  # one job at a time
+        hbox.pack_start(btn, False, False, 0)
+
+    def start_transcription(self, path):
+        if self.transcribe_job:
+            return
+        if not transcribe_launcher.venv_ready():
+            dialog = Gtk.MessageDialog(
+                transient_for=self, modal=True,
+                message_type=Gtk.MessageType.QUESTION,
+                buttons=Gtk.ButtonsType.OK_CANCEL,
+                text="Set up transcription?",
+                secondary_text="The first transcription downloads the "
+                "speech-recognition components and model (~3 GB, one time). "
+                "Everything runs locally on this computer.",
+            )
+            response = dialog.run()
+            dialog.destroy()
+            if response != Gtk.ResponseType.OK:
+                return
+        self.transcribe_path = path
+        self.transcribe_stage = "Starting…"
+        self.transcribe_job = transcribe_launcher.TranscribeJob(
+            path,
+            on_stage=self.on_transcribe_stage,
+            on_done=self.on_transcribe_done,
+            on_error=self.on_transcribe_error,
+        )
+        self.transcribe_job.start()
+        self.refresh_recordings()
+
+    def on_transcribe_stage(self, _stage, message, progress):
+        if progress is not None:
+            message = f"{message} {progress * 100:.0f}%"
+        self.transcribe_stage = message
+        if self.transcribe_label:
+            self.transcribe_label.set_text(message)
+
+    def on_transcribe_done(self, _transcript):
+        self.transcribe_job = None
+        self.transcribe_path = None
+        self.transcribe_label = None
+        self.refresh_recordings()
+
+    def on_transcribe_error(self, message):
+        path = self.transcribe_path
+        self.transcribe_job = None
+        self.transcribe_path = None
+        self.transcribe_label = None
+        self.refresh_recordings()
+        if message.startswith("needs_hf_token:"):
+            self.ask_hf_token(message.partition(":")[2].strip(), path)
+        else:
+            self.error_dialog(message)
+
+    def ask_hf_token(self, explanation, path):
+        dialog = Gtk.MessageDialog(
+            transient_for=self, modal=True,
+            message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.OK_CANCEL,
+            text="HuggingFace token needed",
+            secondary_text=explanation,
+        )
+        entry = Gtk.Entry()
+        entry.set_placeholder_text("hf_…")
+        entry.set_visibility(False)
+        entry.show()
+        dialog.get_content_area().pack_end(entry, False, False, 8)
+        response = dialog.run()
+        token = entry.get_text().strip()
+        dialog.destroy()
+        if response == Gtk.ResponseType.OK and token:
+            transcribe_launcher.save_hf_token(token)
+            if path:
+                self.start_transcription(path)
 
     def on_row_activated(self, _listbox, row):
         if getattr(row, "path", None):
@@ -237,22 +343,34 @@ class MainWindow(Gtk.ApplicationWindow):
     # ----- window / dialogs -----
 
     def on_delete(self, _win, _event):
-        if not self.recorder.recording:
+        if self.recorder.recording:
+            text = "Recording in progress"
+            secondary = "Stop the recording and quit?"
+            confirm = "Stop and quit"
+        elif self.transcribe_job:
+            text = "Transcription in progress"
+            secondary = ("Quit anyway? Progress is saved — transcription "
+                         "resumes where it left off next time.")
+            confirm = "Quit"
+        else:
             return False  # allow close
         dialog = Gtk.MessageDialog(
             transient_for=self,
             modal=True,
             message_type=Gtk.MessageType.QUESTION,
             buttons=Gtk.ButtonsType.NONE,
-            text="Recording in progress",
-            secondary_text="Stop the recording and quit?",
+            text=text,
+            secondary_text=secondary,
         )
-        dialog.add_buttons("Keep recording", Gtk.ResponseType.CANCEL,
-                           "Stop and quit", Gtk.ResponseType.OK)
+        dialog.add_buttons("Stay", Gtk.ResponseType.CANCEL,
+                           confirm, Gtk.ResponseType.OK)
         response = dialog.run()
         dialog.destroy()
         if response == Gtk.ResponseType.OK:
-            self.stop_recording()
+            if self.recorder.recording:
+                self.stop_recording()
+            if self.transcribe_job:
+                self.transcribe_job.cancel()
             return False
         return True  # veto close
 

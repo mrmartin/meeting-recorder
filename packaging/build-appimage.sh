@@ -16,7 +16,7 @@ mkdir -p "$APPDIR/usr/share/meeting-recorder" \
          "$APPDIR/usr/share/icons/hicolor/scalable/apps"
 
 rsync -a --exclude='__pycache__' \
-    "$PROJECT/main.py" "$PROJECT/meeting_recorder" \
+    "$PROJECT/main.py" "$PROJECT/meeting_recorder" "$PROJECT/transcriber" \
     "$APPDIR/usr/share/meeting-recorder/"
 
 install -m 755 "$HERE/AppRun" "$APPDIR/AppRun"
