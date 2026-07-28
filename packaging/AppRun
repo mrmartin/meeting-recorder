@@ -1,0 +1,19 @@
+#!/bin/sh
+# Meeting Recorder AppImage launcher.
+# Uses the host's Python + PyGObject (present on virtually every Linux desktop),
+# preferring /usr/bin/python3 to skip conda/pyenv pythons that lack 'gi'.
+HERE="$(dirname "$(readlink -f "$0")")"
+for PY in /usr/bin/python3 python3; do
+    if "$PY" -c 'import gi' >/dev/null 2>&1; then
+        exec "$PY" "$HERE/usr/share/meeting-recorder/main.py" "$@"
+    fi
+done
+MSG="Meeting Recorder needs PyGObject (GTK bindings for Python).
+
+Debian/Ubuntu:  sudo apt install python3-gi gir1.2-gtk-3.0 gstreamer1.0-pulseaudio
+Fedora:         sudo dnf install python3-gobject gtk3
+Arch:           sudo pacman -S python-gobject gtk3"
+zenity --error --title="Meeting Recorder" --text="$MSG" 2>/dev/null \
+    || notify-send "Meeting Recorder" "$MSG" 2>/dev/null \
+    || printf '%s\n' "$MSG" >&2
+exit 1

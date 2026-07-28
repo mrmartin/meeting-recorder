@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Meeting Recorder
+Comment=Record meetings: system audio and microphone mixed into one file
+Exec=AppRun
+Icon=meeting-recorder
+Terminal=false
+Categories=AudioVideo;Audio;Recorder;
+Keywords=record;meeting;audio;microphone;transcribe;
