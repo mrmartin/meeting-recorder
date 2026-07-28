@@ -36,9 +36,9 @@ DEFAULTS = {
         "pad_s": 0.75,
         "overlap_min": 0.5,
         "full_ratio": 80,
+        "set_ratio": 90,
         "partial_ratio": 85,
         "partial_min_words": 3,
-        "short_protect_words": 2,
     },
     "merge": {
         "turn_gap_s": 3.0,

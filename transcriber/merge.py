@@ -69,13 +69,17 @@ def echo_dedup(me_segs: list[dict], them_segs: list[dict],
     kept, dropped = [], []
     for m in me_segs:
         m_norm = normalize(m["text"])
-        m_words = len(m_norm.split())
+        words = m_norm.split()
         m_dur = max(m["end"] - m["start"], 0.01)
         lo, hi = m["start"] - e["pad_s"], m["end"] + e["pad_s"]
         overlapping = [
             t for t in them_segs
             if min(hi, t["end"]) - max(lo, t["start"]) > 0
         ]
+        # Genuine simultaneous "yeah"/"okay" must survive even when the
+        # remote side says the same word at the same moment.
+        backchannel = bool(words) and all(w in BACKCHANNEL_WORDS
+                                          for w in words)
         verdict = None
         for t in overlapping:
             overlap = (min(hi, t["end"]) - max(lo, t["start"])) / m_dur
@@ -83,8 +87,7 @@ def echo_dedup(me_segs: list[dict], them_segs: list[dict],
                 continue
             t_norm = normalize(t["text"])
             full = fuzz.token_sort_ratio(m_norm, t_norm)
-            if m_words <= e["short_protect_words"]:
-                # Genuine simultaneous "yeah"/"okay" must survive.
+            if backchannel:
                 if full == 100 and overlap >= 0.9:
                     verdict = ("short_exact", full, t)
                     break
@@ -92,11 +95,19 @@ def echo_dedup(me_segs: list[dict], them_segs: list[dict],
             if full >= e["full_ratio"]:
                 verdict = ("full", full, t)
                 break
-        if verdict is None and m_words >= e["partial_min_words"] and overlapping:
+        if verdict is None and not backchannel and overlapping:
+            # Room echo is acoustically degraded, so Whisper renders it as
+            # fragments/mishearings that a straight ratio misses. If the
+            # mic segment's words are (almost) a subset of what the remote
+            # side said around the same time, it is echo.
             concat = " ".join(normalize(t["text"]) for t in overlapping)
-            partial = fuzz.partial_ratio(m_norm, concat)
-            if partial >= e["partial_ratio"]:
-                verdict = ("partial", partial, None)
+            subset = fuzz.token_set_ratio(m_norm, concat)
+            if subset >= e["set_ratio"]:
+                verdict = ("subset", subset, None)
+            elif len(words) >= e["partial_min_words"]:
+                partial = fuzz.partial_ratio(m_norm, concat)
+                if partial >= e["partial_ratio"]:
+                    verdict = ("partial", partial, None)
         if verdict:
             kind, score, t = verdict
             dropped.append({**m, "reason": f"echo_{kind}", "score": score,

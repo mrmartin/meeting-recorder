@@ -29,17 +29,42 @@ def diarize(wav: Path, num_speakers: int = 2) -> list[dict]:
             "hf.co/pyannote/speaker-diarization-3.1 and "
             "hf.co/pyannote/segmentation-3.0)."
         )
-    import torch  # noqa: F401 - ensures actionable error if venv is broken
+    import torch
     from pyannote.audio import Pipeline
 
-    pipeline = Pipeline.from_pretrained(MODEL, use_auth_token=token)
-    annotation = pipeline(str(wav), num_speakers=num_speakers)
+    try:  # pyannote >= 4 renamed the auth kwarg
+        pipeline = Pipeline.from_pretrained(MODEL, token=token)
+    except TypeError:
+        pipeline = Pipeline.from_pretrained(MODEL, use_auth_token=token)
+    # Feed an in-memory waveform: avoids pyannote's torchcodec decode path,
+    # which fails against older system ffmpeg libraries.
+    waveform, sample_rate = _load_wav(wav)
+    audio = {"waveform": torch.from_numpy(waveform), "sample_rate": sample_rate}
+    annotation = pipeline(audio, num_speakers=num_speakers)
+    # pyannote >= 4 wraps the Annotation in a DiarizeOutput
+    annotation = getattr(annotation, "speaker_diarization", annotation)
     turns = []
     for segment, _track, label in annotation.itertracks(yield_label=True):
         turns.append({"start": round(segment.start, 3),
                       "end": round(segment.end, 3), "speaker": label})
     turns.sort(key=lambda t: t["start"])
     return turns
+
+
+def _load_wav(path: Path):
+    """Load a 16-bit PCM WAV as float32 (channels, samples) — stdlib only."""
+    import wave
+
+    import numpy as np
+
+    with wave.open(str(path), "rb") as wav:
+        assert wav.getsampwidth() == 2, "expected 16-bit PCM"
+        frames = wav.readframes(wav.getnframes())
+        rate = wav.getframerate()
+        channels = wav.getnchannels()
+    data = np.frombuffer(frames, dtype=np.int16).astype("float32") / 32768.0
+    data = data.reshape(-1, channels).T.copy()  # (channels, samples)
+    return data, rate
 
 
 def assign_speakers(segments: list[dict], diar_turns: list[dict]) -> list[dict]:
