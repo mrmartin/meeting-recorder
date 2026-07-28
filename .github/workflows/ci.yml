@@ -15,6 +15,7 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q python3-gi gir1.2-gtk-3.0 \
+            gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good
       - name: Install test dependencies
         run: python3 -m pip install rapidfuzz
