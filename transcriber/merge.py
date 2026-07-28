@@ -33,6 +33,9 @@ NON_TERMINAL = {
     "than", "what", "which", "who", "how", "where", "why", "will",
     "would", "could", "should", "can", "do", "does", "did", "have",
     "has", "had", "not", "into", "about",
+    # normalized contractions (normalize() strips apostrophes)
+    "its", "thats", "im", "ive", "youre", "weve", "youve", "theyre",
+    "hes", "shes", "whats", "theres",
 }
 
 def pause_punctuate(segments: list[dict], pause_s: float) -> None:
@@ -173,9 +176,18 @@ def build_turns(segments: list[dict], cfg: dict) -> list[dict]:
         else:
             turns.append({"speaker": seg["speaker"], "start": seg["start"],
                           "end": seg["end"], "texts": [seg["text"]]})
+    if m.get("drop_fragments", True):
+        turns = [t for t in turns if not _is_fragment(t)]
     if m["drop_backchannels"]:
         turns = _drop_backchannels(turns)
     return turns
+
+
+def _is_fragment(turn: dict) -> bool:
+    """Tiny turn ending in a function word = truncated sentence start
+    cut off by diarization boundary jitter; carries no content."""
+    words = normalize(" ".join(turn["texts"])).split()
+    return 0 < len(words) <= 2 and words[-1] in NON_TERMINAL
 
 
 def _drop_backchannels(turns: list[dict]) -> list[dict]:
