@@ -17,8 +17,7 @@ APP_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = Path.home() / ".local" / "share" / "meeting-recorder"
 VENV_PY = DATA_DIR / "venv" / "bin" / "python"
 STAMP = DATA_DIR / "venv" / ".ok"
-TOKEN_PATH = DATA_DIR / "hf_token"
-VENV_SCHEMA = 1
+VENV_SCHEMA = 2
 
 
 def venv_ready() -> bool:
@@ -28,12 +27,6 @@ def venv_ready() -> bool:
         return json.loads(STAMP.read_text()).get("schema") == VENV_SCHEMA
     except (ValueError, OSError):
         return False
-
-
-def save_hf_token(token: str) -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    TOKEN_PATH.write_text(token.strip())
-    TOKEN_PATH.chmod(0o600)
 
 
 class TranscribeJob:

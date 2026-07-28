@@ -265,8 +265,8 @@ class MainWindow(Gtk.ApplicationWindow):
                 buttons=Gtk.ButtonsType.OK_CANCEL,
                 text="Set up transcription?",
                 secondary_text="The first transcription downloads the "
-                "speech-recognition components and model (~3 GB, one time). "
-                "Everything runs locally on this computer.",
+                "speech-recognition components and model (~1.5 GB, one "
+                "time). Everything runs locally on this computer.",
             )
             response = dialog.run()
             dialog.destroy()
@@ -297,36 +297,11 @@ class MainWindow(Gtk.ApplicationWindow):
         self.refresh_recordings()
 
     def on_transcribe_error(self, message):
-        path = self.transcribe_path
         self.transcribe_job = None
         self.transcribe_path = None
         self.transcribe_label = None
         self.refresh_recordings()
-        if message.startswith("needs_hf_token:"):
-            self.ask_hf_token(message.partition(":")[2].strip(), path)
-        else:
-            self.error_dialog(message)
-
-    def ask_hf_token(self, explanation, path):
-        dialog = Gtk.MessageDialog(
-            transient_for=self, modal=True,
-            message_type=Gtk.MessageType.QUESTION,
-            buttons=Gtk.ButtonsType.OK_CANCEL,
-            text="HuggingFace token needed",
-            secondary_text=explanation,
-        )
-        entry = Gtk.Entry()
-        entry.set_placeholder_text("hf_…")
-        entry.set_visibility(False)
-        entry.show()
-        dialog.get_content_area().pack_end(entry, False, False, 8)
-        response = dialog.run()
-        token = entry.get_text().strip()
-        dialog.destroy()
-        if response == Gtk.ResponseType.OK and token:
-            transcribe_launcher.save_hf_token(token)
-            if path:
-                self.start_transcription(path)
+        self.error_dialog(message)
 
     def on_row_activated(self, _listbox, row):
         if getattr(row, "path", None):

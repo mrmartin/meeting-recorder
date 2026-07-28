@@ -34,7 +34,8 @@ def render(turns: list[dict], audio_path: Path, duration: float,
     for turn in turns:
         text = _tidy_case(" ".join(turn["texts"]).strip())
         paragraphs = _paragraphs(text, max_chars)
-        stamp = f"**[{hms(turn['start'])}] {turn['speaker']}:**"
+        label = f" {turn['speaker']}:" if turn["speaker"] else ""
+        stamp = f"**[{hms(turn['start'])}]{label}**"
         lines.append(f"{stamp} {paragraphs[0]}")
         lines.append("")
         for para in paragraphs[1:]:

@@ -1,8 +1,7 @@
 """Venv bootstrap — STDLIB ONLY, runnable by any python3 >= 3.8.
 
-Creates ~/.local/share/meeting-recorder/venv with CPU-only torch (the
-CPU wheel index is used first so pyannote cannot drag in ~5 GB of CUDA
-wheels), faster-whisper, pyannote.audio, and rapidfuzz.
+Creates ~/.local/share/meeting-recorder/venv with faster-whisper
+(CTranslate2 — no torch, no CUDA) and rapidfuzz.
 
 Usage: python3 -m transcriber.bootstrap [--json]
 """
@@ -18,13 +17,11 @@ from pathlib import Path
 DATA_DIR = Path.home() / ".local" / "share" / "meeting-recorder"
 VENV_DIR = DATA_DIR / "venv"
 STAMP = VENV_DIR / ".ok"
-SCHEMA = 1
+SCHEMA = 2
 
 STEPS = [
-    (["--index-url", "https://download.pytorch.org/whl/cpu",
-      "torch", "torchaudio"], "PyTorch (CPU)"),
-    (["faster-whisper"], "faster-whisper"),
-    (["pyannote.audio", "rapidfuzz"], "pyannote + tools"),
+    (["faster-whisper"], "speech recognition"),
+    (["rapidfuzz"], "text tools"),
 ]
 
 

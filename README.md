@@ -22,7 +22,7 @@ Works on any modern Linux desktop (Ubuntu, Fedora, Mint, Arch, …) with PulseAu
 
 1. **Before your meeting**, open Meeting Recorder and press **● Record**. The level bars confirm both your mic and the meeting audio are being captured, and you can watch the file grow while recording.
 2. **After the meeting**, press **■ Stop**. The recording appears in the list (`~/Recordings/meeting_YYYY-MM-DD_HH-MM.ogg`) and plays in any audio player.
-3. Press **Transcribe** next to a recording. The first time, the app offers a one-time download of the speech-recognition components (~3 GB, all local). When it finishes, a document icon appears — click it to read your transcript:
+3. Press **Transcribe** next to a recording. The first time, the app offers a one-time download of the speech-recognition components (~1.5 GB, all local). When it finishes, a document icon appears — click it to read your transcript:
 
 ```markdown
 **[00:12:19] Me:** Absolutely, so that's what we call indexing…
@@ -49,15 +49,14 @@ two `parecord` processes joined with `ffmpeg` at stop time (level meters are
 hidden in that mode).
 
 **Transcription.** The `transcriber/` package runs in a dedicated venv
-(`~/.local/share/meeting-recorder/venv`, created on first use, ~3 GB with
-models — CPU-only, no CUDA). Stereo recordings: each channel is transcribed
+(`~/.local/share/meeting-recorder/venv`, created on first use, ~1.5 GB with
+the model — CPU-only, no CUDA, no torch). Each channel is transcribed
 separately with faster-whisper (large-v3-turbo), echo of the speakers picked
 up by the mic is removed by text-similarity dedup against the system channel,
 and the two sides are merged into timestamped speaker turns with
-pause-based sentence restoration. Legacy mono recordings are attributed with
-pyannote speaker diarization instead (needs a free HuggingFace token).
-Everything is cached under `~/Recordings/.transcribe/`, so re-runs and
-setting tweaks are fast.
+pause-based sentence restoration. Legacy mono recordings (v1 format) get a
+plain timestamped transcript without speaker labels. Everything is cached
+under `~/Recordings/.transcribe/`, so re-runs and setting tweaks are fast.
 
 CLI (same engine as the button):
 
@@ -66,9 +65,8 @@ CLI (same engine as the button):
     ~/Recordings/meeting_X.ogg [--model large-v3-turbo] [--set merge.turn_gap_s=2.5]
 ```
 
-Useful settings: `--set diarize.num_speakers=3` (mono recordings),
-`--set "diarize.names=Alice, Bob, Carol"` (name the speakers, in order of
-first appearance), `--set merge.pause_split_s=0` (disable pause splitting).
+Useful settings: `--set merge.pause_split_s=0` (disable pause splitting),
+`--set merge.turn_gap_s=2.5` (how long a silence starts a new turn).
 
 ## Development
 
@@ -98,5 +96,5 @@ meeting_recorder/
   during meetings.
 - The transcript is plain Markdown next to the audio file — edit, grep, or
   paste it anywhere.
-- Old recordings from v1 (mixed mono) still transcribe via speaker
-  diarization; new stereo recordings get exact Me/Them attribution.
+- Old recordings from v1 (mixed mono) transcribe without speaker labels;
+  stereo recordings (v2+) get exact Me/Them attribution.

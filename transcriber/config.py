@@ -40,13 +40,6 @@ DEFAULTS = {
         "partial_ratio": 85,
         "partial_min_words": 3,
     },
-    "diarize": {
-        # 0 = automatic speaker-count detection
-        "num_speakers": 0,
-        # Optional comma-separated names replacing "Speaker 1, Speaker 2, …"
-        # in order of first appearance, e.g. "Martin, Simon, Danny"
-        "names": "",
-    },
     "merge": {
         "turn_gap_s": 3.0,
         "paragraph_chars": 600,

@@ -1,7 +1,7 @@
-"""CLI orchestrator: prepare -> asr -> [diarize] -> render, with caching.
+"""CLI orchestrator: prepare -> asr -> render, with caching.
 
 Stereo files (L=mic/Me, R=system/Them) get exact source attribution plus
-echo dedup; legacy mono files get pyannote Speaker 1/2 diarization.
+echo dedup; legacy mono files get a plain timestamped transcript.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ def main() -> int:
         prog="transcriber", description="Local meeting transcription")
     parser.add_argument("audio", type=Path)
     parser.add_argument("--stage", default="all",
-                        choices=["all", "prepare", "asr", "diarize", "render"])
+                        choices=["all", "prepare", "asr", "render"])
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--model", help="override asr.model")
     parser.add_argument("--tag", default=None,
@@ -101,30 +101,14 @@ def run_pipeline(audio_path: Path, cfg: dict, tag: str, stage: str,
         if stage == "asr":
             return None
 
-    # ---- diarize (mono only) ----
-    diar_path = work / "diarization.json"
-    if not stereo and (stage == "diarize" or run_all):
-        if force or not cache.fresh([diar_path], [wavs["mono"]]):
-            from . import diarize as diar_mod
-
-            rep.stage("diarize",
-                      "Identifying speakers (takes a while, one-time)…")
-            turns = diar_mod.diarize(
-                wavs["mono"],
-                num_speakers=cfg["diarize"]["num_speakers"])
-            cache.write_json(diar_path, turns)
-        if stage == "diarize":
-            return None
-
     # ---- render ----
     rep.stage("render", "Building transcript…")
     return render_stage(audio_path, work, cfg, tag, stereo, info.duration,
-                        asr_paths, diar_path)
+                        asr_paths)
 
 
 def render_stage(audio_path: Path, work: Path, cfg: dict, tag: str,
-                 stereo: bool, duration: float, asr_paths: dict,
-                 diar_path: Path) -> Path:
+                 stereo: bool, duration: float, asr_paths: dict) -> Path:
     from . import merge, render
 
     pause_s = cfg["merge"]["pause_split_s"]
@@ -142,23 +126,14 @@ def render_stage(audio_path: Path, work: Path, cfg: dict, tag: str,
         segments = me + them
         speakers = ["Me", "Them"]
     else:
-        from . import diarize as diar_mod
-
+        # Legacy mixed-mono recording: no channel separation, so no
+        # speaker attribution — plain timestamped transcript.
         mono_raw = cache.read_json(asr_paths["mono"])
         merge.pause_punctuate(mono_raw, pause_s)
-        raw, dropped_quality = merge.quality_filter(mono_raw, cfg)
-        diar_turns = cache.read_json(diar_path)
-        segments = diar_mod.assign_speakers(raw, diar_turns)
-        names = [n.strip() for n in cfg["diarize"]["names"].split(",")
-                 if n.strip()]
-        if names:
-            mapping = {f"Speaker {i + 1}": name
-                       for i, name in enumerate(names)}
-            for seg in segments:
-                seg["speaker"] = mapping.get(seg["speaker"], seg["speaker"])
-        speakers = sorted({s["speaker"] for s in segments}) or ["Speaker 1"]
-        if not names:
-            speakers = [f"{', '.join(speakers)} (auto-detected)"]
+        segments, dropped_quality = merge.quality_filter(mono_raw, cfg)
+        for seg in segments:
+            seg["speaker"] = ""
+        speakers = ["(not attributed — mono recording)"]
     cache.write_json(work / "dropped_quality.json", dropped_quality)
 
     turns = merge.build_turns(segments, cfg)
