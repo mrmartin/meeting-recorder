@@ -32,7 +32,7 @@ def render(turns: list[dict], audio_path: Path, duration: float,
     ]
     max_chars = cfg["merge"]["paragraph_chars"]
     for turn in turns:
-        text = " ".join(turn["texts"]).strip()
+        text = _tidy_case(" ".join(turn["texts"]).strip())
         paragraphs = _paragraphs(text, max_chars)
         stamp = f"**[{hms(turn['start'])}] {turn['speaker']}:**"
         lines.append(f"{stamp} {paragraphs[0]}")
@@ -41,6 +41,17 @@ def render(turns: list[dict], audio_path: Path, duration: float,
             lines.append(para)
             lines.append("")
     return "\n".join(lines)
+
+
+def _tidy_case(text: str) -> str:
+    """Capitalize turn starts and post-sentence letters.
+
+    Whisper leaves long stretches lowercase; full repunctuation would need
+    another model, but capitalizing after . ? ! and 'I' fixes the worst.
+    """
+    text = re.sub(r"(^|[.?!] +)([a-z])",
+                  lambda m: m.group(1) + m.group(2).upper(), text)
+    return re.sub(r"\bi(['\s])", r"I\1", text)
 
 
 def _paragraphs(text: str, max_chars: int) -> list[str]:

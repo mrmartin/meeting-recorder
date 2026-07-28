@@ -18,7 +18,7 @@ def hf_token() -> str | None:
     return None
 
 
-def diarize(wav: Path, num_speakers: int = 2) -> list[dict]:
+def diarize(wav: Path, num_speakers: int = 0) -> list[dict]:
     """Run diarization; returns [{start, end, speaker: 'SPEAKER_00'}, ...]."""
     token = hf_token()
     if not token:
@@ -40,9 +40,12 @@ def diarize(wav: Path, num_speakers: int = 2) -> list[dict]:
     # which fails against older system ffmpeg libraries.
     waveform, sample_rate = _load_wav(wav)
     audio = {"waveform": torch.from_numpy(waveform), "sample_rate": sample_rate}
-    annotation = pipeline(audio, num_speakers=num_speakers)
-    # pyannote >= 4 wraps the Annotation in a DiarizeOutput
-    annotation = getattr(annotation, "speaker_diarization", annotation)
+    kwargs = {"num_speakers": num_speakers} if num_speakers else {}
+    annotation = pipeline(audio, **kwargs)
+    # pyannote >= 4 wraps the Annotation in a DiarizeOutput. Prefer the
+    # exclusive (overlap-free) view — words can only have one owner.
+    annotation = (getattr(annotation, "exclusive_speaker_diarization", None)
+                  or getattr(annotation, "speaker_diarization", annotation))
     turns = []
     for segment, _track, label in annotation.itertracks(yield_label=True):
         turns.append({"start": round(segment.start, 3),

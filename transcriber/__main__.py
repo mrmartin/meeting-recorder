@@ -109,7 +109,9 @@ def run_pipeline(audio_path: Path, cfg: dict, tag: str, stage: str,
 
             rep.stage("diarize",
                       "Identifying speakers (takes a while, one-time)…")
-            turns = diar_mod.diarize(wavs["mono"], num_speakers=2)
+            turns = diar_mod.diarize(
+                wavs["mono"],
+                num_speakers=cfg["diarize"]["num_speakers"])
             cache.write_json(diar_path, turns)
         if stage == "diarize":
             return None
@@ -125,11 +127,15 @@ def render_stage(audio_path: Path, work: Path, cfg: dict, tag: str,
                  diar_path: Path) -> Path:
     from . import merge, render
 
+    pause_s = cfg["merge"]["pause_split_s"]
     dropped_quality: list = []
     if stereo:
-        me, dq1 = merge.quality_filter(cache.read_json(asr_paths["Me"]), cfg)
-        them, dq2 = merge.quality_filter(
-            cache.read_json(asr_paths["Them"]), cfg)
+        me_raw = cache.read_json(asr_paths["Me"])
+        them_raw = cache.read_json(asr_paths["Them"])
+        merge.pause_punctuate(me_raw, pause_s)
+        merge.pause_punctuate(them_raw, pause_s)
+        me, dq1 = merge.quality_filter(me_raw, cfg)
+        them, dq2 = merge.quality_filter(them_raw, cfg)
         dropped_quality = dq1 + dq2
         me, dropped_echo = merge.echo_dedup(me, them, cfg)
         cache.write_json(work / "dropped_echo.json", dropped_echo)
@@ -138,12 +144,21 @@ def render_stage(audio_path: Path, work: Path, cfg: dict, tag: str,
     else:
         from . import diarize as diar_mod
 
-        raw, dropped_quality = merge.quality_filter(
-            cache.read_json(asr_paths["mono"]), cfg)
+        mono_raw = cache.read_json(asr_paths["mono"])
+        merge.pause_punctuate(mono_raw, pause_s)
+        raw, dropped_quality = merge.quality_filter(mono_raw, cfg)
         diar_turns = cache.read_json(diar_path)
         segments = diar_mod.assign_speakers(raw, diar_turns)
+        names = [n.strip() for n in cfg["diarize"]["names"].split(",")
+                 if n.strip()]
+        if names:
+            mapping = {f"Speaker {i + 1}": name
+                       for i, name in enumerate(names)}
+            for seg in segments:
+                seg["speaker"] = mapping.get(seg["speaker"], seg["speaker"])
         speakers = sorted({s["speaker"] for s in segments}) or ["Speaker 1"]
-        speakers = [f"{', '.join(speakers)} (auto-detected)"]
+        if not names:
+            speakers = [f"{', '.join(speakers)} (auto-detected)"]
     cache.write_json(work / "dropped_quality.json", dropped_quality)
 
     turns = merge.build_turns(segments, cfg)

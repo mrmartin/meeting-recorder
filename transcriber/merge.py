@@ -20,6 +20,47 @@ def normalize(text: str) -> str:
     return _norm_re.sub("", text.lower().replace("'", "")).strip()
 
 
+# ---------- pause-based punctuation restoration ----------
+
+# Words that essentially never end an English sentence — a pause after
+# one is hesitation, not a sentence boundary.
+NON_TERMINAL = {
+    "i", "a", "an", "the", "and", "but", "or", "so", "to", "of", "in",
+    "on", "at", "with", "for", "from", "by", "as", "we", "you", "they",
+    "he", "she", "is", "are", "was", "were", "be", "been", "that",
+    "this", "these", "those", "my", "your", "our", "their", "like",
+    "very", "really", "just", "if", "when", "while", "because", "then",
+    "than", "what", "which", "who", "how", "where", "why", "will",
+    "would", "could", "should", "can", "do", "does", "did", "have",
+    "has", "had", "not", "into", "about",
+}
+
+def pause_punctuate(segments: list[dict], pause_s: float) -> None:
+    """Insert sentence breaks at long word gaps in unpunctuated stretches.
+
+    Whisper leaves long run-ons in fast conversation; its word timestamps
+    still mark the pauses. Mutates seg['words'] tokens and rebuilds
+    seg['text'] so every later stage (dedup, diarization split, turn
+    building) sees the restored punctuation. In-place, cache-friendly.
+    """
+    if not pause_s:
+        return
+    for seg in segments:
+        words = seg.get("words") or []
+        if not words:
+            continue
+        changed = False
+        for word, nxt in zip(words, words[1:]):
+            gap = nxt["start"] - word["end"]
+            token = word["word"].rstrip()
+            if (gap >= pause_s and token and token[-1] not in ".?!,;:"
+                    and normalize(token) not in NON_TERMINAL):
+                word["word"] = token + "."
+                changed = True
+        if changed:
+            seg["text"] = "".join(w["word"] for w in words).strip()
+
+
 # ---------- quality filters (hallucination guards) ----------
 
 def quality_filter(segments: list[dict], cfg: dict) -> tuple[list, list]:
