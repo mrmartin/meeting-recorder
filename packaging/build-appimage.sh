@@ -13,7 +13,7 @@ TOOL_URL="https://github.com/AppImage/appimagetool/releases/download/continuous/
 echo "==> Assembling AppDir"
 rm -rf "$APPDIR"
 mkdir -p "$APPDIR/usr/share/meeting-recorder" \
-         "$APPDIR/usr/share/icons/hicolor/scalable/apps"
+         "$APPDIR/usr/share/icons/hicolor/256x256/apps"
 
 rsync -a --exclude='__pycache__' \
     "$PROJECT/main.py" "$PROJECT/meeting_recorder" "$PROJECT/transcriber" \
@@ -21,9 +21,12 @@ rsync -a --exclude='__pycache__' \
 
 install -m 755 "$HERE/AppRun" "$APPDIR/AppRun"
 install -m 644 "$HERE/meeting-recorder.desktop" "$APPDIR/meeting-recorder.desktop"
-install -m 644 "$HERE/meeting-recorder.svg" "$APPDIR/meeting-recorder.svg"
-install -m 644 "$HERE/meeting-recorder.svg" \
-    "$APPDIR/usr/share/icons/hicolor/scalable/apps/meeting-recorder.svg"
+install -m 644 "$HERE/meeting-recorder.png" "$APPDIR/meeting-recorder.png"
+install -m 644 "$HERE/meeting-recorder.png" \
+    "$APPDIR/usr/share/icons/hicolor/256x256/apps/meeting-recorder.png"
+# In-app copy: window icon + launcher self-integration at runtime
+install -m 644 "$HERE/meeting-recorder.png" \
+    "$APPDIR/usr/share/meeting-recorder/meeting-recorder.png"
 
 if [ ! -x "$TOOL" ]; then
     echo "==> Downloading appimagetool (cached in build/)"

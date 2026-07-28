@@ -9,7 +9,8 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gio, GLib, Gtk
 
-from . import APP_ID, APP_NAME, devices, storage, transcribe_launcher
+from . import APP_ID, APP_NAME, devices, integration, storage, \
+    transcribe_launcher
 
 CSS = b"""
 .record-button { font-size: 18px; font-weight: bold; padding: 14px 40px; }
@@ -395,6 +396,8 @@ class App(Gtk.Application):
 
     def do_activate(self):
         if not self.window:
+            integration.set_window_icon()
+            integration.install_desktop_entry()
             provider = Gtk.CssProvider()
             provider.load_from_data(CSS)
             Gtk.StyleContext.add_provider_for_screen(
