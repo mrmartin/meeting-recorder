@@ -83,9 +83,19 @@ class MainWindow(Gtk.ApplicationWindow):
         box.pack_start(Gtk.Separator(), False, False, 4)
 
         # Recordings list
+        rec_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         recordings_label = Gtk.Label(label="Recordings", xalign=0)
         recordings_label.get_style_context().add_class("dim-label")
-        box.pack_start(recordings_label, False, False, 0)
+        self.transcribe_all_btn = Gtk.CheckButton(label="Transcribe all")
+        self.transcribe_all_btn.set_tooltip_text(
+            "Transcribe every recording that has no transcript yet, one at "
+            "a time. New recordings are picked up automatically; waits "
+            "while you are recording."
+        )
+        self.transcribe_all_btn.connect("toggled", self.on_transcribe_all)
+        rec_header.pack_start(recordings_label, True, True, 0)
+        rec_header.pack_start(self.transcribe_all_btn, False, False, 0)
+        box.pack_start(rec_header, False, False, 0)
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.listbox = Gtk.ListBox()
@@ -140,6 +150,7 @@ class MainWindow(Gtk.ApplicationWindow):
         for bar in self.level_bars.values():
             bar.set_value(0)
         self.refresh_recordings()
+        self.maybe_start_next_auto()
 
     def tick(self):
         elapsed = int(time.monotonic() - self.start_mark)
@@ -255,6 +266,29 @@ class MainWindow(Gtk.ApplicationWindow):
                 btn.set_sensitive(False)  # one job at a time
         hbox.pack_start(btn, False, False, 0)
 
+    def on_transcribe_all(self, btn):
+        if btn.get_active():
+            self.maybe_start_next_auto()
+
+    def _next_untranscribed(self):
+        for path in reversed(storage.list_recordings()):  # oldest first
+            if self.recorder.recording and path == self.current_path:
+                continue
+            if not storage.has_transcript(path):
+                return path
+        return None
+
+    def maybe_start_next_auto(self):
+        """Advance the transcribe-all queue whenever the app is idle."""
+        if not self.transcribe_all_btn.get_active():
+            return
+        # Never compete with a live meeting for CPU; stop_recording re-checks.
+        if self.transcribe_job or self.recorder.recording:
+            return
+        path = self._next_untranscribed()
+        if path:
+            self.start_transcription(path)
+
     def start_transcription(self, path):
         if self.transcribe_job:
             return
@@ -271,6 +305,7 @@ class MainWindow(Gtk.ApplicationWindow):
             response = dialog.run()
             dialog.destroy()
             if response != Gtk.ResponseType.OK:
+                self.transcribe_all_btn.set_active(False)
                 return
         self.transcribe_path = path
         self.transcribe_stage = "Starting…"
@@ -295,12 +330,17 @@ class MainWindow(Gtk.ApplicationWindow):
         self.transcribe_path = None
         self.transcribe_label = None
         self.refresh_recordings()
+        self.maybe_start_next_auto()
 
     def on_transcribe_error(self, message):
         self.transcribe_job = None
         self.transcribe_path = None
         self.transcribe_label = None
         self.refresh_recordings()
+        # Switch the queue off rather than retrying the failed file forever.
+        if self.transcribe_all_btn.get_active():
+            self.transcribe_all_btn.set_active(False)
+            message += "\n\n“Transcribe all” has been switched off."
         self.error_dialog(message)
 
     def on_row_activated(self, _listbox, row):

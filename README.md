@@ -30,6 +30,10 @@ Works on any modern Linux desktop (Ubuntu, Fedora, Mint, Arch, …) with PulseAu
 **[00:12:58] Them:** Yeah, so you'd write an MCP connector for it?
 ```
 
+Have a backlog? Tick **Transcribe all** above the list and the app works
+through every untranscribed recording one at a time — including new ones as
+you record them (it politely waits while a recording is running).
+
 Everything runs on your computer. No audio or text ever leaves your machine.
 
 ---
