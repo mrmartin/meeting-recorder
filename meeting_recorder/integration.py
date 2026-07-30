@@ -53,9 +53,10 @@ def install_desktop_entry() -> None:
     try:
         icon_dest = (data_home / "icons" / "hicolor" / "256x256" / "apps"
                      / f"{ICON_NAME}.png")
-        if not icon_dest.is_file():
+        icon_bytes = icon.read_bytes()
+        if not icon_dest.is_file() or icon_dest.read_bytes() != icon_bytes:
             icon_dest.parent.mkdir(parents=True, exist_ok=True)
-            icon_dest.write_bytes(icon.read_bytes())
+            icon_dest.write_bytes(icon_bytes)
 
         entry = "\n".join([
             "[Desktop Entry]",
