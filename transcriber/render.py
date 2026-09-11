@@ -15,7 +15,8 @@ def hms(seconds: float) -> str:
 
 
 def render(turns: list[dict], audio_path: Path, duration: float,
-           speakers: list[str], model: str, cfg: dict) -> str:
+           speakers: list[str], model: str, cfg: dict,
+           engine: str = "local", language: str | None = None) -> str:
     date_label = _date_from_name(audio_path.stem)
     mins, secs = divmod(int(duration), 60)
     lines = [
@@ -25,7 +26,8 @@ def render(turns: list[dict], audio_path: Path, duration: float,
         f"- **Duration:** {mins} min {secs} s",
         f"- **Participants:** {', '.join(speakers)}",
         f"- **Transcribed:** {datetime.date.today().isoformat()} · "
-        f"{model} (local)",
+        f"{model} ({engine})"
+        + (f" · language: {language}" if language else ""),
         "",
         "---",
         "",

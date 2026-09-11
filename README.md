@@ -5,7 +5,7 @@
 [![Downloads](https://img.shields.io/github/downloads/mrmartin/meeting_speech_recorder/total)](https://github.com/mrmartin/meeting_speech_recorder/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Linux-blue)](https://github.com/mrmartin/meeting_speech_recorder/releases/latest)
-[![Privacy](https://img.shields.io/badge/transcription-100%25%20local-brightgreen)](#transcription)
+[![Privacy](https://img.shields.io/badge/transcription-local%20by%20default-brightgreen)](#transcription)
 
 **Meeting Recorder records both sides of your online meetings — your microphone and the other participants — into one audio file, and transcribes it on your own computer into readable, speaker-labelled minutes.**
 
@@ -31,10 +31,13 @@ Works on any modern Linux desktop (Ubuntu, Fedora, Mint, Arch, …) with PulseAu
 ```
 
 Have a backlog? Tick **Transcribe all** above the list and the app works
-through every untranscribed recording one at a time — including new ones as
-you record them (it politely waits while a recording is running).
+through every untranscribed recording from newest to oldest — including new
+ones as you record them (it politely waits while a recording is running).
+The selection is remembered across app restarts.
 
-Everything runs on your computer. No audio or text ever leaves your machine.
+Transcription is local by default, so no audio or text leaves your machine.
+An optional **Cloud** switch uses a separately configured transcription
+service; the app asks for consent before uploading anything.
 
 ---
 
@@ -62,6 +65,24 @@ pause-based sentence restoration. Legacy mono recordings (v1 format) get a
 plain timestamped transcript without speaker labels. Everything is cached
 under `~/Recordings/.transcribe/`, so re-runs and setting tweaks are fast.
 
+**Optional cloud transcription.** Open transcription settings from the gear
+button, enter your own API key, and choose a two-letter language code (`en` by
+default). The **Cloud** switch then applies to individual buttons and
+**Transcribe all**. Stereo recordings are split locally and the Me/Them
+channels are uploaded and transcribed separately before the normal echo
+removal and speaker-labelled rendering. The key is stored in
+`~/.config/meeting-recorder/settings.json` with user-only permissions.
+Each completed row shows a **Local** or **Cloud** badge for its active
+transcript. Recordings that already completed cloud transcription are skipped
+by later cloud batch runs and cannot accidentally be submitted twice.
+
+The currently configured development service is plain HTTP and is therefore
+blocked unless the app is launched with
+`MEETING_REC_ALLOW_INSECURE_CLOUD=1`. Do not distribute a build with that
+override; the endpoint must use HTTPS before cloud mode is released.
+Cloud-retranscribing an existing local result preserves it as
+`meeting_….transcript.local.md` before replacing the normal transcript.
+
 CLI (same engine as the button):
 
 ```sh
@@ -76,7 +97,8 @@ Useful settings: `--set merge.pause_split_s=0` (disable pause splitting),
 
 ```sh
 ./run.sh                                  # run from source
-python3 tests/test_transcriber.py         # unit tests (pip install rapidfuzz)
+python3 tests/test_transcriber.py         # transcription unit tests
+python3 tests/test_cloud.py               # cloud tests (localhost only)
 /usr/bin/python3 -m meeting_recorder.recorder   # 5s headless recording smoke test
 packaging/build-appimage.sh               # build the AppImage
 ```

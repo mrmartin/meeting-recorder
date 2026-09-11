@@ -36,19 +36,24 @@ class TranscribeJob:
     on_error(message).
     """
 
-    def __init__(self, audio_path, on_stage, on_done, on_error):
+    def __init__(self, audio_path, on_stage, on_done, on_error,
+                 extra_args=(), use_venv=True):
         self.audio_path = Path(audio_path)
         self.on_stage = on_stage
         self.on_done = on_done
         self.on_error = on_error
+        self.extra_args = list(extra_args)
+        self.use_venv = use_venv
         self.proc = None
         self._finished = False
 
     def start(self):
-        self._bootstrapping = not venv_ready()
+        self._bootstrapping = self.use_venv and not venv_ready()
         if not self._bootstrapping:
-            argv = [str(VENV_PY), "-m", "transcriber",
-                    str(self.audio_path), "--json"]
+            python = str(VENV_PY) if self.use_venv else (
+                sys.executable or "/usr/bin/python3")
+            argv = [python, "-m", "transcriber",
+                    str(self.audio_path), "--json", *self.extra_args]
         else:
             # Stdlib-only bootstrap runs under the system python, then the
             # app relaunches the job (see _on_process_exit).

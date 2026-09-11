@@ -9,7 +9,9 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gio, GLib, Gtk
 
-from . import APP_ID, APP_NAME, devices, integration, storage, \
+from transcriber import cloud
+
+from . import APP_ID, APP_NAME, devices, integration, settings, storage, \
     transcribe_launcher
 
 CSS = b"""
@@ -17,6 +19,10 @@ CSS = b"""
 .timer { font-size: 32px; font-family: monospace; }
 .dim-label { opacity: 0.6; }
 .recording-live { color: #e01b24; font-weight: bold; }
+.transcriber-badge { font-size: 10px; padding: 2px 6px; border-radius: 8px;
+                     border: 1px solid alpha(@theme_fg_color, 0.35); }
+.transcriber-cloud { color: #1c71d8; font-weight: bold; }
+.transcriber-local { opacity: 0.75; }
 """
 
 # LevelBar mapping: -60 dB .. 0 dB -> 0.0 .. 1.0
@@ -35,6 +41,9 @@ class MainWindow(Gtk.ApplicationWindow):
         self.transcribe_path = None
         self.transcribe_stage = ""
         self.transcribe_label = None
+        self.app_settings = settings.load()
+        self._changing_cloud = False
+        self._changing_transcribe_all = False
         self.set_default_size(360, 480)
         self.connect("delete-event", self.on_delete)
 
@@ -45,6 +54,22 @@ class MainWindow(Gtk.ApplicationWindow):
         folder_btn.set_tooltip_text("Open recordings folder")
         folder_btn.connect("clicked", self.on_open_folder)
         header.pack_start(folder_btn)
+
+        settings_btn = Gtk.Button.new_from_icon_name(
+            "preferences-system-symbolic", Gtk.IconSize.BUTTON)
+        settings_btn.set_tooltip_text("Transcription settings")
+        settings_btn.connect("clicked", self.on_settings_clicked)
+        header.pack_end(settings_btn)
+        cloud_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+        cloud_box.pack_start(Gtk.Label(label="Cloud"), False, False, 0)
+        self.cloud_toggle = Gtk.Switch()
+        self.cloud_toggle.set_active(
+            bool(self.app_settings["cloud_enabled"]))
+        self.cloud_toggle.set_tooltip_text(
+            "Use cloud transcription for all transcription actions")
+        self.cloud_toggle.connect("notify::active", self.on_cloud_toggled)
+        cloud_box.pack_start(self.cloud_toggle, False, False, 0)
+        header.pack_end(cloud_box)
         self.set_titlebar(header)
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
@@ -87,10 +112,10 @@ class MainWindow(Gtk.ApplicationWindow):
         recordings_label = Gtk.Label(label="Recordings", xalign=0)
         recordings_label.get_style_context().add_class("dim-label")
         self.transcribe_all_btn = Gtk.CheckButton(label="Transcribe all")
+        self.transcribe_all_btn.set_active(
+            bool(self.app_settings["transcribe_all"]))
         self.transcribe_all_btn.set_tooltip_text(
-            "Transcribe every recording that has no transcript yet, one at "
-            "a time. New recordings are picked up automatically; waits "
-            "while you are recording."
+            "Transcribe every recording that has no transcript yet."
         )
         self.transcribe_all_btn.connect("toggled", self.on_transcribe_all)
         rec_header.pack_start(recordings_label, True, True, 0)
@@ -105,7 +130,10 @@ class MainWindow(Gtk.ApplicationWindow):
         box.pack_start(scrolled, True, True, 0)
 
         self.refresh_recordings()
+        self._update_transcribe_all_tooltip()
         self.show_all()
+        if self.transcribe_all_btn.get_active():
+            GLib.idle_add(self.maybe_start_next_auto)
 
     # ----- recording control -----
 
@@ -242,6 +270,16 @@ class MainWindow(Gtk.ApplicationWindow):
 
     def _pack_transcribe_widget(self, hbox, path):
         """Per-row widget: open-transcript icon, spinner, or Transcribe."""
+        engine = storage.transcript_engine(path)
+        if engine:
+            badge = Gtk.Label(label=engine.title())
+            style = badge.get_style_context()
+            style.add_class("transcriber-badge")
+            style.add_class(f"transcriber-{engine}")
+            where = "locally" if engine == "local" else "in the cloud"
+            badge.set_tooltip_text(
+                f"The active transcript was produced {where}")
+            hbox.pack_start(badge, False, False, 0)
         if self.transcribe_job and path == self.transcribe_path:
             spinner = Gtk.Spinner()
             spinner.start()
@@ -258,6 +296,18 @@ class MainWindow(Gtk.ApplicationWindow):
             btn.set_relief(Gtk.ReliefStyle.NONE)
             btn.connect("clicked", lambda _b: self.launch_uri(
                 storage.transcript_path(path).as_uri()))
+            hbox.pack_start(btn, False, False, 0)
+            selected = "cloud" if self.cloud_toggle.get_active() else "local"
+            if not (selected == "cloud" and storage.has_cloud_result(path)):
+                retry = Gtk.Button.new_from_icon_name(
+                    "view-refresh-symbolic", Gtk.IconSize.BUTTON)
+                retry.set_tooltip_text(f"Retranscribe using {selected}")
+                retry.set_relief(Gtk.ReliefStyle.NONE)
+                retry.connect("clicked", lambda _b: self.start_transcription(
+                    path, force=True))
+                retry.set_sensitive(not bool(self.transcribe_job))
+                hbox.pack_start(retry, False, False, 0)
+            return
         else:
             btn = Gtk.Button(label="Transcribe")
             btn.set_relief(Gtk.ReliefStyle.NONE)
@@ -267,14 +317,168 @@ class MainWindow(Gtk.ApplicationWindow):
         hbox.pack_start(btn, False, False, 0)
 
     def on_transcribe_all(self, btn):
+        if self._changing_transcribe_all:
+            return
+        old = bool(self.app_settings.get("transcribe_all"))
+        self.app_settings["transcribe_all"] = btn.get_active()
+        try:
+            settings.save(self.app_settings)
+        except (OSError, ValueError) as exc:
+            self.app_settings["transcribe_all"] = old
+            self._changing_transcribe_all = True
+            btn.set_active(old)
+            self._changing_transcribe_all = False
+            self.error_dialog(f"Could not save transcription settings:\n{exc}")
+            return
         if btn.get_active():
             self.maybe_start_next_auto()
 
+    def on_cloud_toggled(self, toggle, _pspec):
+        if self._changing_cloud:
+            return
+        active = toggle.get_active()
+        if active and not self._ensure_cloud_ready():
+            self._set_cloud_toggle(False)
+            return
+        self.app_settings["cloud_enabled"] = active
+        try:
+            settings.save(self.app_settings)
+        except (OSError, ValueError) as exc:
+            self.error_dialog(f"Could not save transcription settings:\n{exc}")
+            self._set_cloud_toggle(not active)
+            return
+        if self.transcribe_all_btn.get_active():
+            self.transcribe_all_btn.set_active(False)
+        self._update_transcribe_all_tooltip()
+        self.refresh_recordings()
+
+    def _set_cloud_toggle(self, active):
+        self._changing_cloud = True
+        self.cloud_toggle.set_active(active)
+        self._changing_cloud = False
+
+    def _ensure_cloud_ready(self):
+        allowed, reason = cloud.endpoint_available()
+        if not allowed:
+            self.error_dialog(reason)
+            return False
+        if not self.app_settings.get("cloud_api_key"):
+            if not self.show_transcription_settings():
+                return False
+        if not self.app_settings.get("cloud_consent"):
+            dialog = Gtk.MessageDialog(
+                transient_for=self,
+                modal=True,
+                message_type=Gtk.MessageType.WARNING,
+                buttons=Gtk.ButtonsType.NONE,
+                text="Send meeting audio to the cloud?",
+                secondary_text=self._cloud_privacy_message(),
+            )
+            dialog.add_buttons("Cancel", Gtk.ResponseType.CANCEL,
+                               "Allow", Gtk.ResponseType.OK)
+            response = dialog.run()
+            dialog.destroy()
+            if response != Gtk.ResponseType.OK:
+                return False
+            self.app_settings["cloud_consent"] = True
+            try:
+                settings.save(self.app_settings)
+            except (OSError, ValueError) as exc:
+                self.error_dialog(f"Could not save transcription settings:\n{exc}")
+                return False
+        return True
+
+    @staticmethod
+    def _cloud_privacy_message():
+        message = (
+            "Cloud mode uploads each audio channel to the configured "
+            "transcription service. The service says it does not archive "
+            "uploads."
+        )
+        if cloud.ENDPOINT.startswith("http://"):
+            message += (
+                " This development endpoint uses plain HTTP, so its API "
+                "key and audio are not encrypted in transit."
+            )
+        return message
+
+    def on_settings_clicked(self, _button):
+        self.show_transcription_settings()
+
+    def show_transcription_settings(self):
+        dialog = Gtk.Dialog(
+            title="Transcription settings", transient_for=self, modal=True)
+        dialog.add_buttons("Cancel", Gtk.ResponseType.CANCEL,
+                           "Save", Gtk.ResponseType.OK)
+        grid = Gtk.Grid(column_spacing=10, row_spacing=10, margin=14)
+        key_entry = Gtk.Entry()
+        key_entry.set_visibility(False)
+        key_entry.set_invisible_char("•")
+        key_entry.set_text(self.app_settings.get("cloud_api_key", ""))
+        key_entry.set_placeholder_text("Your mono-speech API key")
+        key_entry.set_hexpand(True)
+
+        language = Gtk.ComboBoxText.new_with_entry()
+        for code in ("en", "de", "fr", "es", "it", "pt", "nl", "cs",
+                     "pl", "ja", "ko", "zh"):
+            language.append_text(code)
+        language.get_child().set_text(
+            self.app_settings.get("cloud_language", "en"))
+        language.set_tooltip_text("Two-letter ISO 639-1 language code")
+
+        grid.attach(Gtk.Label(label="API key", xalign=1), 0, 0, 1, 1)
+        grid.attach(key_entry, 1, 0, 1, 1)
+        grid.attach(Gtk.Label(label="Language", xalign=1), 0, 1, 1, 1)
+        grid.attach(language, 1, 1, 1, 1)
+        endpoint = Gtk.Label(label=cloud.ENDPOINT, xalign=0)
+        endpoint.set_selectable(True)
+        endpoint.set_ellipsize(3)
+        endpoint.get_style_context().add_class("dim-label")
+        grid.attach(Gtk.Label(label="Endpoint", xalign=1), 0, 2, 1, 1)
+        grid.attach(endpoint, 1, 2, 1, 1)
+        dialog.get_content_area().add(grid)
+        dialog.show_all()
+
+        saved = False
+        while True:
+            response = dialog.run()
+            if response != Gtk.ResponseType.OK:
+                break
+            lang = language.get_child().get_text().strip().lower()
+            if not settings.valid_language(lang):
+                self.error_dialog(
+                    "Language must be a two-letter ISO 639-1 code, such as en.")
+                continue
+            updated = dict(self.app_settings)
+            updated["cloud_api_key"] = key_entry.get_text().strip()
+            updated["cloud_language"] = lang
+            try:
+                settings.save(updated)
+            except (OSError, ValueError) as exc:
+                self.error_dialog(f"Could not save transcription settings:\n{exc}")
+                continue
+            self.app_settings = updated
+            saved = True
+            break
+        dialog.destroy()
+        return saved
+
+    def _update_transcribe_all_tooltip(self):
+        engine = "cloud" if self.cloud_toggle.get_active() else "local"
+        self.transcribe_all_btn.set_tooltip_text(
+            f"Transcribe every recording without a completed {engine} "
+            "transcript, one at a time. New recordings are picked up "
+            "automatically; waits while recording."
+        )
+
     def _next_untranscribed(self):
-        for path in reversed(storage.list_recordings()):  # oldest first
+        for path in storage.list_recordings():  # newest first
             if self.recorder.recording and path == self.current_path:
                 continue
-            if not storage.has_transcript(path):
+            done = (storage.has_cloud_result(path)
+                    if self.cloud_toggle.get_active()
+                    else storage.has_local_transcript(path))
+            if not done:
                 return path
         return None
 
@@ -289,10 +493,16 @@ class MainWindow(Gtk.ApplicationWindow):
         if path:
             self.start_transcription(path)
 
-    def start_transcription(self, path):
+    def start_transcription(self, path, force=False):
         if self.transcribe_job:
             return
-        if not transcribe_launcher.venv_ready():
+        use_cloud = self.cloud_toggle.get_active()
+        if use_cloud and storage.has_cloud_result(path):
+            return
+        if use_cloud and not self._ensure_cloud_ready():
+            self.transcribe_all_btn.set_active(False)
+            return
+        if not use_cloud and not transcribe_launcher.venv_ready():
             dialog = Gtk.MessageDialog(
                 transient_for=self, modal=True,
                 message_type=Gtk.MessageType.QUESTION,
@@ -309,11 +519,21 @@ class MainWindow(Gtk.ApplicationWindow):
                 return
         self.transcribe_path = path
         self.transcribe_stage = "Starting…"
+        extra_args = []
+        if use_cloud:
+            extra_args.extend([
+                "--engine", "cloud", "--language",
+                self.app_settings["cloud_language"],
+            ])
+        if force:
+            extra_args.append("--force")
         self.transcribe_job = transcribe_launcher.TranscribeJob(
             path,
             on_stage=self.on_transcribe_stage,
             on_done=self.on_transcribe_done,
             on_error=self.on_transcribe_error,
+            extra_args=extra_args,
+            use_venv=not use_cloud,
         )
         self.transcribe_job.start()
         self.refresh_recordings()

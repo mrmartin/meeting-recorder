@@ -31,7 +31,9 @@ jobs:
       - name: App imports (GTK + GStreamer + recorder pipeline elements)
         run: python3 -c "from meeting_recorder import app, recorder, storage, devices; print('imports OK; gst elements present:', recorder.gst_available())"
       - name: Transcriber unit tests
-        run: python3 tests/test_transcriber.py
+        run: |
+          python3 tests/test_transcriber.py
+          python3 tests/test_cloud.py
 
   appimage:
     name: Build AppImage

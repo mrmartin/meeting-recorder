@@ -7,6 +7,7 @@ only requires re-running the (sub-second) render stage.
 from __future__ import annotations
 
 import re
+from difflib import SequenceMatcher
 
 from .config import HALLUCINATION_BLACKLIST
 
@@ -76,12 +77,16 @@ def quality_filter(segments: list[dict], cfg: dict) -> tuple[list, list]:
         reason = None
         if not norm:
             reason = "empty"
-        elif (seg["no_speech_prob"] > q["no_speech_prob"]
+        elif (seg.get("no_speech_prob") is not None
+              and seg.get("avg_logprob") is not None
+              and seg["no_speech_prob"] > q["no_speech_prob"]
               and seg["avg_logprob"] < q["avg_logprob"]):
             reason = "no_speech"
-        elif seg["compression_ratio"] > q["compression_ratio"]:
+        elif (seg.get("compression_ratio") is not None
+              and seg["compression_ratio"] > q["compression_ratio"]):
             reason = "compression"
         elif (any(b in norm for b in HALLUCINATION_BLACKLIST)
+              and seg.get("avg_logprob") is not None
               and seg["avg_logprob"] < q["blacklist_logprob"]):
             reason = "blacklist"
         else:
@@ -107,7 +112,10 @@ def echo_dedup(me_segs: list[dict], them_segs: list[dict],
 
     Returns (kept_me, dropped_me) — dropped entries carry match details.
     """
-    from rapidfuzz import fuzz
+    try:
+        from rapidfuzz import fuzz
+    except ImportError:
+        fuzz = _StdlibFuzz()
 
     e = cfg["echo"]
     kept, dropped = [], []
@@ -159,6 +167,44 @@ def echo_dedup(me_segs: list[dict], them_segs: list[dict],
         else:
             kept.append(m)
     return kept, dropped
+
+
+class _StdlibFuzz:
+    """Small rapidfuzz-compatible fallback for cloud-only installations."""
+
+    @staticmethod
+    def _ratio(left: str, right: str) -> float:
+        return SequenceMatcher(None, left, right).ratio() * 100
+
+    @classmethod
+    def token_sort_ratio(cls, left: str, right: str) -> float:
+        return cls._ratio(" ".join(sorted(left.split())),
+                          " ".join(sorted(right.split())))
+
+    @classmethod
+    def token_set_ratio(cls, left: str, right: str) -> float:
+        a, b = set(left.split()), set(right.split())
+        if not a or not b:
+            return 0
+        common = a & b
+        if common == a or common == b:
+            return 100
+        common_text = " ".join(sorted(common))
+        return max(cls._ratio(common_text, " ".join(sorted(a))),
+                   cls._ratio(common_text, " ".join(sorted(b))))
+
+    @classmethod
+    def partial_ratio(cls, left: str, right: str) -> float:
+        if not left or not right:
+            return 0
+        short, long = sorted((left, right), key=len)
+        matcher = SequenceMatcher(None, short, long)
+        best = 0.0
+        for block in matcher.get_matching_blocks():
+            start = max(0, block[1] - block[0])
+            window = long[start:start + len(short)]
+            best = max(best, cls._ratio(short, window))
+        return best
 
 
 # ---------- turn building ----------
