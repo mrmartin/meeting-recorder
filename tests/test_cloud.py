@@ -174,6 +174,22 @@ class StorageTests(unittest.TestCase):
             self.assertEqual(storage.transcript_engine(audio), "local")
             self.assertTrue(storage.has_cloud_result(audio))
 
+    def test_cloud_history_survives_purged_cache(self):
+        with tempfile.TemporaryDirectory() as td:
+            audio = pathlib.Path(td) / "meeting_2026-09-11_12-00.ogg"
+            audio.write_bytes(b"audio")
+            storage.transcript_path(audio).write_text(
+                "# Meeting transcript\n\n"
+                "- **Transcribed:** 2026-10-12 · mono-speech (cloud)"
+                " · language: en\n\n---\n")
+            self.assertEqual(storage.transcript_engine(audio), "cloud")
+            self.assertTrue(storage.has_cloud_result(audio))
+
+            storage.transcript_path(audio).write_text(
+                "- **Transcribed:** 2026-10-12 · large-v3-turbo (local)\n")
+            self.assertEqual(storage.transcript_engine(audio), "local")
+            self.assertFalse(storage.has_cloud_result(audio))
+
     def test_recording_order_is_newest_first(self):
         old_dir = storage.RECORDINGS_DIR
         try:

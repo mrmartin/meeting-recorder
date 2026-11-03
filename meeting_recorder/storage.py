@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import re
 from pathlib import Path
 
 RECORDINGS_DIR = Path.home() / "Recordings"
@@ -54,11 +55,27 @@ def _transcription_meta(audio_path: Path) -> dict:
         return {}
 
 
+def _header_engine(audio_path: Path) -> str | None:
+    """Engine named in the transcript's own header — survives a purged
+    .transcribe cache, e.g. "- **Transcribed:** … · mono-speech (cloud)"."""
+    try:
+        with transcript_path(audio_path).open(encoding="utf-8") as f:
+            for _ in range(10):
+                match = re.match(r"- \*\*Transcribed:\*\*.*\((\w+)\)",
+                                 f.readline())
+                if match:
+                    return match.group(1)
+    except OSError:
+        pass
+    return None
+
+
 def transcript_engine(audio_path: Path) -> str | None:
     """Engine that produced the transcript currently opened by the app."""
     if not has_transcript(audio_path):
         return None
-    engine = _transcription_meta(audio_path).get("render", {}).get("engine")
+    engine = (_transcription_meta(audio_path).get("render", {}).get("engine")
+              or _header_engine(audio_path))
     return "cloud" if engine == "cloud" else "local"
 
 
@@ -74,9 +91,9 @@ def has_cloud_transcript(audio_path: Path) -> bool:
 
 def has_cloud_result(audio_path: Path) -> bool:
     """Whether this audio has ever completed both cloud channel requests."""
-    meta = _transcription_meta(audio_path)
-    if meta.get("render", {}).get("engine") == "cloud":
+    if transcript_engine(audio_path) == "cloud":
         return True
+    meta = _transcription_meta(audio_path)
     needed = {"mono"} if _looks_mono_cloud(meta) else {"Me", "Them"}
     return all(isinstance(meta.get(f"cloud.{name}"), dict) for name in needed)
 
