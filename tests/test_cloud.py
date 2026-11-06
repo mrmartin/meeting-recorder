@@ -7,6 +7,7 @@ import http.server
 import os
 import pathlib
 import stat
+import struct
 import sys
 import tempfile
 import threading
@@ -168,7 +169,40 @@ def write_wav(path, duration, quiet_spans=()):
         out.writeframes(samples.tobytes())
 
 
+def make_extensible(path):
+    """Rewrite a WAV the way ffmpeg writes a split stereo channel: an
+    extensible fmt chunk, with an odd-sized metadata chunk before the audio."""
+    with wave.open(str(path), "rb") as reader:
+        rate = reader.getframerate()
+        pcm = reader.readframes(reader.getnframes())
+    fmt = struct.pack("<HHIIHHHHI", 0xFFFE, 1, rate, rate * 2, 2, 16, 22, 16,
+                      1) + bytes(16)
+    body = (b"WAVEfmt " + struct.pack("<I", len(fmt)) + fmt
+            + b"LIST" + struct.pack("<I", 5) + b"abcde\0"
+            + b"data" + struct.pack("<I", len(pcm)) + pcm)
+    path.write_bytes(b"RIFF" + struct.pack("<I", len(body)) + body)
+    return pcm
+
+
 class PartPlanningTests(unittest.TestCase):
+    def test_reads_extensible_channel_wavs(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            wav = root / "me.16k.wav"
+            write_wav(wav, 12.0, [(4.5, 5.5)])
+            pcm = make_extensible(wav)
+            parts = audio_mod.plan_parts(wav, 6, 2)
+            self.assertEqual(len(parts), 2)
+            self.assertTrue(4.5 <= parts[0][1] <= 5.5, parts)
+            self.assertEqual(parts[1][1], 12.0)
+            joined = b""
+            for i, (start, end) in enumerate(parts):
+                part = root / f"{i}.wav"
+                audio_mod.extract_part(wav, start, end, part)
+                with wave.open(str(part), "rb") as reader:
+                    joined += reader.readframes(reader.getnframes())
+            self.assertEqual(joined, pcm)
+
     def test_short_recording_stays_whole(self):
         with tempfile.TemporaryDirectory() as td:
             wav = pathlib.Path(td) / "a.wav"
