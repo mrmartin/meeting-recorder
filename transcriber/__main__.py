@@ -115,7 +115,7 @@ def run_pipeline(audio_path: Path, cfg: dict, tag: str, stage: str,
 
 def run_cloud_pipeline(audio_path: Path, cfg: dict, language: str,
                        force: bool, rep: Reporter) -> Path:
-    """Split by source, upload each channel, then use the normal renderer."""
+    """Split by source, upload each channel in parts, then render as usual."""
     from meeting_recorder import settings
     from . import audio as audio_mod, cloud
 
@@ -145,41 +145,60 @@ def run_cloud_pipeline(audio_path: Path, cfg: dict, language: str,
 
     endpoint_tag = hashlib.sha256(cloud.ENDPOINT.encode()).hexdigest()[:10]
     tag = f"cloud.{endpoint_tag}.{language}"
-    srt_paths = {name: work / f"{tag}.{name.lower()}.srt"
-                 for name in wavs}
     pending_path = work / "cloud.pending.json"
     pending = _pending_cloud_run(pending_path, audio_path, language,
                                  cloud.ENDPOINT, force)
 
     asr_paths = {}
     for name, wav in wavs.items():
-        srt_path = srt_paths[name]
-        completed = name in pending.get("completed", []) if pending else False
-        needs_upload = not cache.fresh([srt_path], [wav])
-        if force:
-            needs_upload = not completed
         label = {"Me": "your channel", "Them": "the remote channel",
                  "mono": "the recording"}[name]
-        if needs_upload:
-            stage_name = f"cloud_{name.lower()}" if stereo else "cloud"
-            rep.stage(stage_name, f"Uploading {label}…", 0.0)
-            srt, detected = cloud.upload(
-                wav, language, key,
-                on_progress=lambda p, sn=stage_name, lb=label: rep.stage(
-                    sn, f"Uploading {lb}…", round(p, 3)))
-            _write_text_atomic(srt_path, srt)
+        stage_name = f"cloud_{name.lower()}" if stereo else "cloud"
+        speaker = name if stereo else "Speaker"
+        parts = audio_mod.plan_parts(wav, cloud.PART_MAX_S,
+                                     cloud.PART_SEARCH_S)
+        segments = []
+        detected = None
+        for index, (start, end) in enumerate(parts):
+            split = len(parts) > 1
+            part = f"{name}.{index + 1:02d}" if split else name
+            srt_path = work / f"{tag}.{part.lower()}.srt"
+            what = (f"{label} (part {index + 1} of {len(parts)})" if split
+                    else label)
+            needs_upload = not cache.fresh([srt_path], [wav])
+            if force:
+                needs_upload = part not in pending.get("completed", [])
+            if needs_upload:
+                rep.stage(stage_name, f"Uploading {what}…",
+                          round(index / len(parts), 3))
+                upload_path = work / f"{part.lower()}.part.wav"
+                if split:
+                    audio_mod.extract_part(wav, start, end, upload_path)
+                try:
+                    srt, detected = cloud.upload(
+                        upload_path if split else wav, language, key,
+                        on_progress=lambda p, sn=stage_name, wt=what, i=index:
+                        rep.stage(sn, f"Uploading {wt}…",
+                                  round((i + p) / len(parts), 3)))
+                finally:
+                    upload_path.unlink(missing_ok=True)
+                _write_text_atomic(srt_path, srt)
+                if pending is not None:
+                    pending.setdefault("completed", []).append(part)
+                    cache.write_json(pending_path, pending)
+            else:
+                rep.stage("cloud_cache",
+                          f"Using saved cloud result for {what}…")
+            segments.extend(cloud.parse_srt(srt_path.read_text(), speaker,
+                                            start))
+
+        # Only a whole channel counts as done: an interrupted one resumes
+        # from its saved parts.
+        if detected:
             cache.update_meta(work, f"cloud.{name}", {
                 "endpoint": cloud.ENDPOINT, "language": language,
                 "detected_language": detected,
             })
-            if pending is not None:
-                pending.setdefault("completed", []).append(name)
-                cache.write_json(pending_path, pending)
-        else:
-            rep.stage("cloud_cache", f"Using saved cloud result for {label}…")
-
-        speaker = name if stereo else "Speaker"
-        segments = cloud.parse_srt(srt_path.read_text(), speaker)
         asr_path = work / f"asr.{name.lower()}.{tag}.json"
         cache.write_json(asr_path, segments)
         asr_paths[name] = asr_path

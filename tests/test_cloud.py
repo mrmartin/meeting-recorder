@@ -11,12 +11,15 @@ import sys
 import tempfile
 import threading
 import unittest
+import wave
+from array import array
+from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from meeting_recorder import settings, storage  # noqa: E402
-from transcriber import cache, cloud, config  # noqa: E402
-from transcriber.__main__ import render_stage  # noqa: E402
+from transcriber import audio as audio_mod, cache, cloud, config  # noqa: E402
+from transcriber.__main__ import render_stage, run_cloud_pipeline  # noqa: E402
 from transcriber.protocol import Reporter  # noqa: E402
 
 
@@ -28,11 +31,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
     retry_after = None
     request_body = b""
     api_key = None
+    requests = 0
+    fail_request = None
 
     def do_POST(self):
+        type(self).requests += 1
         type(self).api_key = self.headers.get("X-API-Key")
         type(self).request_body = self.rfile.read(
             int(self.headers["Content-Length"]))
+        if type(self).requests == type(self).fail_request:
+            type(self).status = 503
         self.send_response(type(self).status)
         if type(self).retry_after:
             self.send_header("Retry-After", type(self).retry_after)
@@ -54,6 +62,8 @@ class CloudTests(unittest.TestCase):
         Handler.retry_after = None
         Handler.request_body = b""
         Handler.api_key = None
+        Handler.requests = 0
+        Handler.fail_request = None
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         cloud.ENDPOINT = (
             f"http://127.0.0.1:{self.server.server_port}/mono-speech")
@@ -98,6 +108,95 @@ class CloudTests(unittest.TestCase):
         self.assertEqual(caught.exception.status, 503)
         self.assertEqual(caught.exception.retry_after, "120")
         self.assertIn("120 seconds", str(caught.exception))
+
+
+    def _recording(self, root):
+        """A 12 s mono recording, with its prepared WAV already cached."""
+        audio = root / "meeting_2026-09-11_12-00.ogg"
+        audio.write_bytes(b"audio")
+        write_wav(cache.work_dir(audio) / "mono.16k.wav", 12.0, [(3.5, 4.5)])
+        return audio
+
+    def _transcribe(self, audio):
+        with mock.patch.object(audio_mod, "probe",
+                               return_value=audio_mod.AudioInfo(1, 12.0)), \
+                mock.patch.object(settings, "api_key", return_value="secret"):
+            return run_cloud_pipeline(audio, config.load(None), "en", False,
+                                      Reporter(False))
+
+    def test_long_recording_uploads_in_parts_on_one_timeline(self):
+        with tempfile.TemporaryDirectory() as td, \
+                mock.patch.object(cloud, "PART_MAX_S", 6), \
+                mock.patch.object(cloud, "PART_SEARCH_S", 2):
+            audio = self._recording(pathlib.Path(td))
+            self._transcribe(audio)
+            self.assertEqual(Handler.requests, 2)
+            work = cache.work_dir(audio)
+            asr = cache.read_json(next(work.glob("asr.mono.*.json")))
+            self.assertEqual([s["start"] for s in asr], [1.25, 5.5])
+            self.assertEqual(list(work.glob("*.part.wav")), [])
+            self.assertTrue(storage.has_cloud_result(audio))
+
+    def test_interrupted_upload_resumes_from_next_part(self):
+        Handler.fail_request = 2
+        with tempfile.TemporaryDirectory() as td, \
+                mock.patch.object(cloud, "PART_MAX_S", 6), \
+                mock.patch.object(cloud, "PART_SEARCH_S", 2):
+            audio = self._recording(pathlib.Path(td))
+            with self.assertRaises(cloud.CloudError):
+                self._transcribe(audio)
+            self.assertFalse(storage.has_cloud_result(audio))
+
+            Handler.status = 200
+            self._transcribe(audio)
+            self.assertEqual(Handler.requests, 3)
+            self.assertTrue(storage.has_cloud_result(audio))
+
+
+def write_wav(path, duration, quiet_spans=()):
+    """16 kHz tone with silent spans, each sample distinct enough to compare."""
+    rate = 16000
+    samples = array("h", (8000 + i % 1000 if i % 2 else -8000 - i % 1000
+                          for i in range(int(duration * rate))))
+    for start, end in quiet_spans:
+        for i in range(int(start * rate), int(end * rate)):
+            samples[i] = 0
+    with wave.open(str(path), "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(rate)
+        out.writeframes(samples.tobytes())
+
+
+class PartPlanningTests(unittest.TestCase):
+    def test_short_recording_stays_whole(self):
+        with tempfile.TemporaryDirectory() as td:
+            wav = pathlib.Path(td) / "a.wav"
+            write_wav(wav, 4.0)
+            self.assertEqual(audio_mod.plan_parts(wav, 6, 2), [(0.0, 4.0)])
+
+    def test_cut_lands_in_the_pause(self):
+        with tempfile.TemporaryDirectory() as td:
+            wav = pathlib.Path(td) / "a.wav"
+            write_wav(wav, 12.0, [(4.5, 5.5)])
+            (_, cut), (start, end) = audio_mod.plan_parts(wav, 6, 2)
+            self.assertEqual(cut, start)
+            self.assertEqual(end, 12.0)
+            self.assertTrue(4.5 <= cut <= 5.5, cut)
+
+    def test_parts_rejoin_sample_exact(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            wav = root / "a.wav"
+            write_wav(wav, 12.0, [(3.0, 3.8), (8.2, 9.0)])
+            joined = b""
+            for i, (start, end) in enumerate(audio_mod.plan_parts(wav, 4, 1)):
+                part = root / f"{i}.wav"
+                audio_mod.extract_part(wav, start, end, part)
+                with wave.open(str(part), "rb") as reader:
+                    joined += reader.readframes(reader.getnframes())
+            with wave.open(str(wav), "rb") as reader:
+                self.assertEqual(joined, reader.readframes(reader.getnframes()))
 
 
 class StorageTests(unittest.TestCase):

@@ -70,16 +70,17 @@ button, enter your own API key, and choose a two-letter language code (`en` by
 default). The **Cloud** switch then applies to individual buttons and
 **Transcribe all**. Stereo recordings are split locally and the Me/Them
 channels are uploaded and transcribed separately before the normal echo
-removal and speaker-labelled rendering. The key is stored in
+removal and speaker-labelled rendering. Anything over an hour is cut into parts
+of up to about an hour, in pauses, and an interrupted upload resumes from the
+last finished part. The key is stored in
 `~/.config/meeting-recorder/settings.json` with user-only permissions.
 Each completed row shows a **Local** or **Cloud** badge for its active
 transcript. Recordings that already completed cloud transcription are skipped
 by later cloud batch runs and cannot accidentally be submitted twice.
 
-The currently configured development service is plain HTTP and is therefore
-blocked unless the app is launched with
-`MEETING_REC_ALLOW_INSECURE_CLOUD=1`. Do not distribute a build with that
-override; the endpoint must use HTTPS before cloud mode is released.
+Uploads go over HTTPS. A plain-HTTP endpoint is refused unless the app is
+launched with `MEETING_REC_ALLOW_INSECURE_CLOUD=1`, which is for local testing
+only.
 Cloud-retranscribing an existing local result preserves it as
 `meeting_….transcript.local.md` before replacing the normal transcript.
 

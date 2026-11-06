@@ -10,9 +10,13 @@ import ssl
 from pathlib import Path
 from urllib.parse import urlsplit
 
-ENDPOINT = "http://176.123.8.80:5084/mono-speech"
+ENDPOINT = "https://martintech.co.uk/speech_to_text/mono-speech"
 INSECURE_OPT_IN = "MEETING_REC_ALLOW_INSECURE_CLOUD"
 CHUNK_SIZE = 1024 * 1024
+# Long channels upload in parts: ~115 MB/hour keeps each one well below the
+# server's 500 MB request limit and its gateway timeouts.
+PART_MAX_S = 60 * 60
+PART_SEARCH_S = 2 * 60
 
 
 class CloudError(RuntimeError):
@@ -133,8 +137,11 @@ _TIME_RE = re.compile(
 )
 
 
-def parse_srt(text: str, speaker: str) -> list[dict]:
-    """Convert ordinary SRT cues into the segment shape used by merging."""
+def parse_srt(text: str, speaker: str, offset: float = 0.0) -> list[dict]:
+    """Convert ordinary SRT cues into the segment shape used by merging.
+
+    offset moves the cues of one uploaded part onto the recording's timeline.
+    """
     normalized = text.replace("\r\n", "\n").replace("\r", "\n").strip()
     if not normalized:
         return []  # a silent channel legitimately has no cues
@@ -158,8 +165,8 @@ def parse_srt(text: str, speaker: str) -> list[dict]:
             raise CloudError("The cloud service returned a backwards SRT cue.")
         segments.append({
             "speaker": speaker,
-            "start": round(start, 3),
-            "end": round(end, 3),
+            "start": round(start + offset, 3),
+            "end": round(end + offset, 3),
             "text": cue_text,
             "words": [],
         })
