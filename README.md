@@ -1,34 +1,57 @@
 # Meeting Recorder
 
-[![CI](https://github.com/mrmartin/meeting_speech_recorder/actions/workflows/ci.yml/badge.svg)](https://github.com/mrmartin/meeting_speech_recorder/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/mrmartin/meeting_speech_recorder)](https://github.com/mrmartin/meeting_speech_recorder/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/mrmartin/meeting_speech_recorder/total)](https://github.com/mrmartin/meeting_speech_recorder/releases)
+[![CI](https://github.com/mrmartin/meeting-recorder/actions/workflows/ci.yml/badge.svg)](https://github.com/mrmartin/meeting-recorder/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/mrmartin/meeting-recorder)](https://github.com/mrmartin/meeting-recorder/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/mrmartin/meeting-recorder/total)](https://github.com/mrmartin/meeting-recorder/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Linux-blue)](https://github.com/mrmartin/meeting_speech_recorder/releases/latest)
+[![Platform](https://img.shields.io/badge/platform-Linux-blue)](https://github.com/mrmartin/meeting-recorder/releases/latest)
 [![Privacy](https://img.shields.io/badge/transcription-local%20by%20default-brightgreen)](#transcription)
 
-**Meeting Recorder records both sides of your online meetings — your microphone and the other participants — into one audio file, and transcribes it on your own computer into readable, speaker-labelled minutes.**
+**Record and transcribe your online meetings on Linux. No bot joins the call, and nothing leaves your computer.**
+
+<p align="center">
+  <img src="docs/demo.gif" width="500" alt="Meeting Recorder recording a call, stopping, and transcribing it">
+</p>
+
+Meeting Recorder captures both sides of a call, your microphone and the other
+participants, into one small audio file. Then it turns the recording into a
+transcript that shows who said what:
+
+```markdown
+**[00:00:13] Them:** Two things. We need the final screenshots, and someone has to test the sign-up flow on a phone.
+
+**[00:00:19] Me:** I can take the screenshots today. Could you handle the phone test by Wednesday?
+
+**[00:00:23] Them:** Yes, Wednesday works. I will send you the results in the morning.
+```
+
+- **Made for Linux.** One download, under 1 MB. Works with Zoom, Teams, Google
+  Meet, or anything else that plays sound through your computer.
+- **No bot in the call.** It records what your computer hears. Nothing joins
+  the meeting and nobody gets an invitation.
+- **Private.** Transcription runs on your own computer. No account, and nothing
+  is uploaded unless you switch on the optional cloud service yourself.
+- **Me and Them, kept apart.** Your voice and theirs are recorded on separate
+  channels, so the transcript knows who spoke.
+- **Free and open source** (MIT licence).
+
+Please tell people when you are recording. In many places the law requires
+everyone's consent.
 
 ## Install
 
-1. Download **[MeetingRecorder-x86_64.AppImage](https://github.com/mrmartin/meeting_speech_recorder/releases/latest)** (under 1 MB)
+1. Download **[MeetingRecorder-x86_64.AppImage](https://github.com/mrmartin/meeting-recorder/releases/latest)** (under 1 MB)
 2. Make it executable: right-click the file → **Properties** → enable **Execute as program**
    (or in a terminal: `chmod +x MeetingRecorder-x86_64.AppImage`)
 3. Double-click it to start. The app adds itself to your applications menu, so next time just search for "Meeting Recorder".
 
-Works on any modern Linux desktop (Ubuntu, Fedora, Mint, Arch, …) with PulseAudio or PipeWire. No root, no packages, no account. In the rare case something is missing, the app tells you the exact command to install it.
+Made for Linux desktops with PulseAudio or PipeWire, and used daily on Ubuntu. No root, no packages, no account. In the rare case something is missing, the app tells you the exact command to install it.
 
 ## How to use
 
 1. **Before your meeting**, open Meeting Recorder and press **● Record**. The level bars confirm both your mic and the meeting audio are being captured, and you can watch the file grow while recording.
 2. **After the meeting**, press **■ Stop**. The recording appears in the list (`~/Recordings/meeting_YYYY-MM-DD_HH-MM.ogg`) and plays in any audio player.
-3. Press **Transcribe** next to a recording. The first time, the app offers a one-time download of the speech-recognition components (~1.5 GB, all local). When it finishes, a document icon appears — click it to read your transcript:
-
-```markdown
-**[00:12:19] Me:** Absolutely, so that's what we call indexing…
-
-**[00:12:58] Them:** Yeah, so you'd write an MCP connector for it?
-```
+3. Press **Transcribe** next to a recording. The first time, the app offers a one-time download of the speech-recognition components (~1.5 GB, all local). When it finishes, a document icon appears — click it to read your transcript.
 
 Have a backlog? Tick **Transcribe all** above the list and the app works
 through every untranscribed recording from newest to oldest — including new

@@ -1,0 +1,42 @@
+name: Something does not work
+description: Tell us what went wrong so we can fix it
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: input
+    id: distro
+    attributes:
+      label: Your Linux system
+      description: For example "Ubuntu 24.04" or "Fedora 43". If unsure, run `cat /etc/os-release` in a terminal and paste the first lines.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Meeting Recorder version
+      description: The version of the file you downloaded, for example "v2.6.0".
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part?
+      options:
+        - Starting the app
+        - Recording
+        - Transcription on my computer
+        - Cloud transcription
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: message
+    attributes:
+      label: Any error message
+      description: Paste the text the app showed, if any. Please remove anything private first.
