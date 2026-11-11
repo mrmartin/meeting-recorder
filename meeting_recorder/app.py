@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 
 import gi
@@ -57,7 +58,7 @@ class MainWindow(Gtk.ApplicationWindow):
 
         settings_btn = Gtk.Button.new_from_icon_name(
             "preferences-system-symbolic", Gtk.IconSize.BUTTON)
-        settings_btn.set_tooltip_text("Transcription settings")
+        settings_btn.set_tooltip_text("Settings")
         settings_btn.connect("clicked", self.on_settings_clicked)
         header.pack_end(settings_btn)
         cloud_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
@@ -129,6 +130,7 @@ class MainWindow(Gtk.ApplicationWindow):
         scrolled.add(self.listbox)
         box.pack_start(scrolled, True, True, 0)
 
+        storage.remember_existing()
         self.refresh_recordings()
         self._update_transcribe_all_tooltip()
         self.show_all()
@@ -150,8 +152,8 @@ class MainWindow(Gtk.ApplicationWindow):
                 "Check that your sound server (PulseAudio/PipeWire) is running."
             )
             return
-        path = storage.new_recording_path()
         try:
+            path = storage.new_recording_path()
             self.recorder.start(path)
         except Exception as exc:  # noqa: BLE001 - surface anything to the user
             self.error_dialog(f"Could not start recording:\n{exc}")
@@ -407,7 +409,7 @@ class MainWindow(Gtk.ApplicationWindow):
 
     def show_transcription_settings(self):
         dialog = Gtk.Dialog(
-            title="Transcription settings", transient_for=self, modal=True)
+            title="Settings", transient_for=self, modal=True)
         dialog.add_buttons("Cancel", Gtk.ResponseType.CANCEL,
                            "Save", Gtk.ResponseType.OK)
         grid = Gtk.Grid(column_spacing=10, row_spacing=10, margin=14)
@@ -436,6 +438,38 @@ class MainWindow(Gtk.ApplicationWindow):
         endpoint.get_style_context().add_class("dim-label")
         grid.attach(Gtk.Label(label="Endpoint", xalign=1), 0, 2, 1, 1)
         grid.attach(endpoint, 1, 2, 1, 1)
+
+        recordings_folder = self._folder_button("Recordings folder",
+                                                storage.recordings_folder())
+        old_transcripts = storage.transcripts_dir()
+        with_recordings = not self.app_settings.get("transcripts_dir")
+        transcripts_folder = self._folder_button("Transcripts folder",
+                                                 old_transcripts)
+        beside = Gtk.CheckButton(label="Keep transcripts with recordings")
+        beside.connect("toggled", lambda b: transcripts_folder.set_sensitive(
+            not b.get_active()))
+        beside.set_active(with_recordings)
+        transcripts_folder.set_sensitive(not with_recordings)
+        hint = Gtk.Label(
+            label="The list shows the recordings folder. Earlier recordings "
+            "stay where they are; to keep them in the list, move them there "
+            "yourself, along with the hidden .transcribe folder.",
+            xalign=0)
+        hint.set_line_wrap(True)
+        hint.set_max_width_chars(48)
+        hint.get_style_context().add_class("dim-label")
+        grid.attach(Gtk.Label(label="Recordings", xalign=1), 0, 3, 1, 1)
+        grid.attach(recordings_folder, 1, 3, 1, 1)
+        grid.attach(Gtk.Label(label="Transcripts", xalign=1), 0, 4, 1, 1)
+        grid.attach(transcripts_folder, 1, 4, 1, 1)
+        grid.attach(beside, 1, 5, 1, 1)
+        grid.attach(hint, 1, 6, 1, 1)
+        if self.recorder.recording or self.transcribe_job:
+            for widget in (recordings_folder, transcripts_folder, beside):
+                widget.set_sensitive(False)
+                widget.set_tooltip_text(
+                    "Folders can be changed when nothing is recording or "
+                    "transcribing")
         dialog.get_content_area().add(grid)
         dialog.show_all()
 
@@ -452,33 +486,91 @@ class MainWindow(Gtk.ApplicationWindow):
             updated = dict(self.app_settings)
             updated["cloud_api_key"] = key_entry.get_text().strip()
             updated["cloud_language"] = lang
+            if recordings_folder.get_sensitive():
+                chosen = recordings_folder.get_filename()
+                updated["recordings_dir"] = chosen or updated["recordings_dir"]
+            if transcripts_folder.get_sensitive():
+                chosen = transcripts_folder.get_filename()
+                updated["transcripts_dir"] = chosen or updated["transcripts_dir"]
+            elif beside.get_sensitive():
+                updated["transcripts_dir"] = ""
+            folders = [f for f in (updated["recordings_dir"],
+                                   updated["transcripts_dir"]) if f]
+            unwritable = [f for f in folders if not os.access(f, os.W_OK)]
+            if unwritable:
+                self.error_dialog(f"Cannot write to {unwritable[0]}.")
+                continue
             try:
                 settings.save(updated)
             except (OSError, ValueError) as exc:
-                self.error_dialog(f"Could not save transcription settings:\n{exc}")
+                self.error_dialog(f"Could not save settings:\n{exc}")
                 continue
+            old_choice = self.app_settings.get("transcripts_dir")
             self.app_settings = updated
+            if updated["transcripts_dir"] != old_choice:
+                self._offer_transcript_move(old_transcripts)
             saved = True
             break
         dialog.destroy()
+        self.refresh_recordings()
         return saved
 
+    @staticmethod
+    def _folder_button(title, folder):
+        button = Gtk.FileChooserButton(
+            title=title, action=Gtk.FileChooserAction.SELECT_FOLDER)
+        button.set_create_folders(True)
+        button.set_filename(str(folder))
+        button.set_hexpand(True)
+        return button
+
+    def _offer_transcript_move(self, source):
+        """Transcripts left in a folder the app no longer reads look missing,
+        and Transcribe all would process those recordings again."""
+        dest = storage.transcripts_dir()
+        count = len(storage.transcript_files(source)) if source.is_dir() else 0
+        if not count or source == dest:
+            return
+        left_behind = source != storage.recordings_folder()
+        dialog = Gtk.MessageDialog(
+            transient_for=self, modal=True,
+            message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.NONE,
+            text="Move existing transcripts to the new folder?",
+            secondary_text=f"{count} files\nFrom {source}\nTo {dest}" + (
+                "\n\nIf you leave them, the app stops seeing them, and "
+                "Transcribe all may process those recordings again."
+                if left_behind else ""),
+        )
+        dialog.add_buttons("Leave them", Gtk.ResponseType.CANCEL,
+                           "Move", Gtk.ResponseType.OK)
+        response = dialog.run()
+        dialog.destroy()
+        if response == Gtk.ResponseType.OK:
+            try:
+                storage.move_transcripts(source, dest)
+            except OSError as exc:
+                self.error_dialog(f"Could not move all transcripts:\n{exc}")
+
     def _update_transcribe_all_tooltip(self):
-        engine = "cloud" if self.cloud_toggle.get_active() else "local"
+        missing = ("has not been transcribed in the cloud"
+                   if self.cloud_toggle.get_active()
+                   else "has never been transcribed")
         self.transcribe_all_btn.set_tooltip_text(
-            f"Transcribe every recording without a completed {engine} "
-            "transcript, one at a time. New recordings are picked up "
-            "automatically; waits while recording."
+            f"Transcribe every recording that {missing}, one at a time. "
+            "New recordings are picked up automatically; waits while "
+            "recording. Finished recordings are never redone, even after "
+            "the cache is cleared; use a row's own button for that."
         )
 
     def _next_untranscribed(self):
+        if not storage.transcripts_reachable():
+            return None
         for path in storage.list_recordings():  # newest first
             if self.recorder.recording and path == self.current_path:
                 continue
-            done = (storage.has_cloud_result(path)
-                    if self.cloud_toggle.get_active()
-                    else storage.has_local_transcript(path))
-            if not done:
+            if not storage.already_transcribed(
+                    path, self.cloud_toggle.get_active()):
                 return path
         return None
 

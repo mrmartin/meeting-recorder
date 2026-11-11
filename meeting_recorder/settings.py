@@ -24,6 +24,8 @@ DEFAULTS = {
     "cloud_api_key": "",
     "cloud_consent": False,
     "transcribe_all": False,
+    "recordings_dir": "",  # empty: ~/Recordings
+    "transcripts_dir": "",  # empty: beside each recording
 }
 
 
@@ -46,6 +48,8 @@ def load() -> dict:
     values["cloud_enabled"] = bool(values.get("cloud_enabled"))
     values["cloud_consent"] = bool(values.get("cloud_consent"))
     values["transcribe_all"] = bool(values.get("transcribe_all"))
+    values["recordings_dir"] = str(values.get("recordings_dir") or "")
+    values["transcripts_dir"] = str(values.get("transcripts_dir") or "")
     return values
 
 

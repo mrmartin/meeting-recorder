@@ -242,6 +242,7 @@ def render_stage(audio_path: Path, work: Path, cfg: dict, tag: str,
                  diar_path=None, rep=None, engine: str = "local",
                  model: str | None = None,
                  language: str | None = None) -> Path:
+    from meeting_recorder import storage
     from . import merge, render
 
     pause_s = cfg["merge"]["pause_split_s"]
@@ -271,8 +272,8 @@ def render_stage(audio_path: Path, work: Path, cfg: dict, tag: str,
     model = model or cfg["asr"]["model"]
     text = render.render(turns, audio_path, duration,
                          speakers, model, cfg, engine, language)
-    transcript = audio_path.with_suffix("").with_name(
-        audio_path.stem + ".transcript.md")
+    transcript = storage.transcript_path(audio_path)
+    transcript.parent.mkdir(parents=True, exist_ok=True)
     previous_engine = None
     try:
         previous_engine = cache.read_json(work / "meta.json").get(
@@ -281,8 +282,7 @@ def render_stage(audio_path: Path, work: Path, cfg: dict, tag: str,
         pass
     if engine == "cloud" and transcript.is_file() \
             and previous_engine != "cloud":
-        backup = audio_path.with_name(
-            audio_path.stem + ".transcript.local.md")
+        backup = storage.local_transcript_backup_path(audio_path)
         backup_tmp = backup.with_suffix(backup.suffix + ".tmp")
         shutil.copyfile(transcript, backup_tmp)
         backup_tmp.replace(backup)
@@ -292,6 +292,7 @@ def render_stage(audio_path: Path, work: Path, cfg: dict, tag: str,
     cache.update_meta(work, "render", {
         "turns": len(turns), "tag": tag, "engine": engine, "model": model,
         "language": language or cfg["asr"]["language"]})
+    storage.remember_transcription(audio_path, engine)
     return transcript
 
 

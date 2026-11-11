@@ -6,6 +6,7 @@ from __future__ import annotations
 import http.server
 import os
 import pathlib
+import shutil
 import stat
 import struct
 import sys
@@ -25,6 +26,17 @@ from transcriber.protocol import Reporter  # noqa: E402
 
 
 SRT = "1\n00:00:01,250 --> 00:00:03,500\nHello from cloud.\n"
+
+
+def setUpModule():
+    """Keep tests away from the real settings file and its folders."""
+    global _settings_dir
+    _settings_dir = tempfile.TemporaryDirectory()
+    settings.SETTINGS_PATH = pathlib.Path(_settings_dir.name) / "settings.json"
+
+
+def tearDownModule():
+    _settings_dir.cleanup()
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -324,19 +336,180 @@ class StorageTests(unittest.TestCase):
             self.assertFalse(storage.has_cloud_result(audio))
 
     def test_recording_order_is_newest_first(self):
-        old_dir = storage.RECORDINGS_DIR
-        try:
-            with tempfile.TemporaryDirectory() as td:
-                storage.RECORDINGS_DIR = pathlib.Path(td)
-                older = storage.RECORDINGS_DIR / "meeting_older.ogg"
-                newer = storage.RECORDINGS_DIR / "meeting_newer.ogg"
-                older.write_bytes(b"old")
-                newer.write_bytes(b"new")
-                os.utime(older, ns=(1_000_000_000, 1_000_000_000))
-                os.utime(newer, ns=(2_000_000_000, 2_000_000_000))
-                self.assertEqual(storage.list_recordings(), [newer, older])
-        finally:
-            storage.RECORDINGS_DIR = old_dir
+        self.addCleanup(settings.SETTINGS_PATH.unlink, missing_ok=True)
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            settings.save({"recordings_dir": td})
+            older = root / "meeting_older.ogg"
+            newer = root / "meeting_newer.ogg"
+            older.write_bytes(b"a")
+            newer.write_bytes(b"b")
+            os.utime(older, (1000, 1000))
+            os.utime(newer, (2000, 2000))
+            self.assertEqual(storage.list_recordings(), [newer, older])
+
+
+class FolderTests(unittest.TestCase):
+    def setUp(self):
+        self.addCleanup(settings.SETTINGS_PATH.unlink, missing_ok=True)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = pathlib.Path(self.tmp.name)
+        self.recordings = root / "audio"
+        self.transcripts = root / "text"
+        self.recordings.mkdir()
+        self.transcripts.mkdir()
+        self.audio = self.recordings / "meeting_2026-09-11_12-00.ogg"
+        self.audio.write_bytes(b"audio")
+        self.name = "meeting_2026-09-11_12-00.transcript.md"
+        settings.save({"recordings_dir": str(self.recordings)})
+
+    def _choose_transcripts(self, folder=None):
+        settings.save({"recordings_dir": str(self.recordings),
+                       "transcripts_dir": str(folder or self.transcripts)})
+
+    def test_defaults_keep_everything_beside_the_recording(self):
+        settings.save({})
+        self.assertEqual(storage.recordings_folder(),
+                         storage.DEFAULT_RECORDINGS_DIR)
+        self.assertEqual(storage.transcript_path(self.audio),
+                         self.recordings / self.name)
+        self.assertTrue(storage.transcripts_reachable())
+
+    def test_new_recordings_go_to_the_chosen_folder(self):
+        self.assertEqual(storage.new_recording_path().parent, self.recordings)
+        self.assertEqual(storage.list_recordings(), [self.audio])
+
+    def test_transcripts_go_to_the_chosen_folder(self):
+        self._choose_transcripts()
+        self.assertEqual(storage.transcript_path(self.audio),
+                         self.transcripts / self.name)
+        self.assertEqual(storage.local_transcript_backup_path(self.audio).parent,
+                         self.transcripts)
+        self.assertEqual(storage.transcripts_dir(), self.transcripts)
+
+    def test_choosing_a_folder_keeps_earlier_cloud_transcripts_done(self):
+        (self.recordings / self.name).write_text(
+            "- **Transcribed:** 2026-10-12 · mono-speech (cloud)\n")
+        self._choose_transcripts()
+        self.assertTrue(storage.has_transcript(self.audio))
+        self.assertTrue(storage.has_cloud_result(self.audio))
+
+    def test_chosen_folder_wins_over_a_copy_beside_the_recording(self):
+        (self.recordings / self.name).write_text("old")
+        (self.transcripts / self.name).write_text("new")
+        self._choose_transcripts()
+        self.assertEqual(storage.transcript_path(self.audio).read_text(), "new")
+
+    def test_missing_transcripts_folder_is_not_reachable(self):
+        self._choose_transcripts(self.transcripts / "unplugged")
+        self.assertFalse(storage.transcripts_reachable())
+
+    def test_move_transcripts_never_replaces_a_file(self):
+        (self.recordings / self.name).write_text("moved")
+        backup = "meeting_2026-09-11_12-00.transcript.local.md"
+        (self.recordings / backup).write_text("backup")
+        (self.recordings / "meeting_2.transcript.md").write_text("source")
+        (self.transcripts / "meeting_2.transcript.md").write_text("existing")
+        storage.move_transcripts(self.recordings, self.transcripts)
+        self.assertEqual((self.transcripts / self.name).read_text(), "moved")
+        self.assertEqual((self.transcripts / backup).read_text(), "backup")
+        self.assertEqual(
+            (self.transcripts / "meeting_2.transcript.md").read_text(),
+            "existing")
+        self.assertTrue((self.recordings / "meeting_2.transcript.md").exists())
+        self.assertTrue(self.audio.exists())
+
+    def test_render_writes_to_the_chosen_folder(self):
+        self._choose_transcripts()
+        cfg = config.load(None)
+        work = cache.work_dir(self.audio)
+        asr = work / "asr.json"
+        cache.write_json(asr, [{"speaker": "Speaker", "start": 1.0, "end": 2.0,
+                                "text": "Hello there.", "words": []}])
+        transcript = render_stage(
+            self.audio, work, cfg, "tag", False, 3.0, {"mono": asr},
+            work / "none.json", Reporter(False), engine="cloud",
+            model="mono-speech", language="en")
+        self.assertEqual(transcript, self.transcripts / self.name)
+        self.assertEqual(storage.transcript_engine(self.audio), "cloud")
+        self.assertFalse((self.recordings / self.name).exists())
+
+
+CLOUD_HEADER = "- **Transcribed:** 2026-10-12 · mono-speech (cloud)\n"
+LOCAL_HEADER = "- **Transcribed:** 2026-10-12 · large-v3-turbo (local)\n"
+
+
+class TranscribeAllTests(unittest.TestCase):
+    """What Transcribe all leaves alone, whatever happens to the files."""
+
+    def setUp(self):
+        history = settings.SETTINGS_PATH.with_name("transcribed.json")
+        history.unlink(missing_ok=True)
+        self.addCleanup(history.unlink, missing_ok=True)
+        self.addCleanup(settings.SETTINGS_PATH.unlink, missing_ok=True)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = pathlib.Path(self.tmp.name)
+        settings.save({"recordings_dir": str(self.root)})
+        self.audio = self.root / "meeting_2026-09-11_12-00.ogg"
+        self.audio.write_bytes(b"audio")
+        self.transcript = self.root / "meeting_2026-09-11_12-00.transcript.md"
+
+    def _render(self, engine):
+        work = cache.work_dir(self.audio)
+        asr = work / "asr.json"
+        cache.write_json(asr, [{"speaker": "Speaker", "start": 1.0, "end": 2.0,
+                                "text": "Hello there.", "words": []}])
+        render_stage(self.audio, work, config.load(None), "tag", False, 3.0,
+                     {"mono": asr}, work / "none.json", Reporter(False),
+                     engine=engine, model="model", language="en")
+
+    def _lose_cache_and_transcript(self):
+        shutil.rmtree(self.root / ".transcribe")
+        self.transcript.unlink()
+
+    def test_new_recording_is_picked_up(self):
+        self.assertFalse(storage.already_transcribed(self.audio, cloud=True))
+        self.assertFalse(storage.already_transcribed(self.audio, cloud=False))
+
+    def test_finished_cloud_job_is_never_redone(self):
+        self._render("cloud")
+        self._lose_cache_and_transcript()
+        self.assertTrue(storage.already_transcribed(self.audio, cloud=True))
+        self.assertTrue(storage.already_transcribed(self.audio, cloud=False))
+
+    def test_transcripts_from_before_the_record_are_remembered(self):
+        self.transcript.write_text(CLOUD_HEADER)
+        storage.remember_existing()
+        self.transcript.unlink()
+        self.assertTrue(storage.already_transcribed(self.audio, cloud=True))
+
+    def test_local_transcript_still_gets_its_cloud_run(self):
+        self._render("local")
+        self.assertFalse(storage.already_transcribed(self.audio, cloud=True))
+        self.assertTrue(storage.already_transcribed(self.audio, cloud=False))
+
+    def test_cloud_transcript_is_not_redone_locally(self):
+        self.transcript.write_text(CLOUD_HEADER)
+        self.assertTrue(storage.already_transcribed(self.audio, cloud=False))
+
+    def test_new_recording_reusing_a_name_is_picked_up(self):
+        self._render("cloud")
+        self._lose_cache_and_transcript()
+        self.audio.write_bytes(b"a different meeting")
+        self.assertFalse(storage.already_transcribed(self.audio, cloud=True))
+
+    def test_manual_retranscription_stays_possible(self):
+        self._render("cloud")
+        self._lose_cache_and_transcript()
+        self.assertFalse(storage.has_cloud_result(self.audio))
+
+    def test_unreadable_record_falls_back_to_the_files(self):
+        self.transcript.write_text(LOCAL_HEADER)
+        settings.SETTINGS_PATH.with_name("transcribed.json").write_text("{]")
+        self.assertTrue(storage.already_transcribed(self.audio, cloud=False))
+        self.assertFalse(storage.already_transcribed(self.audio, cloud=True))
 
 
 if __name__ == "__main__":

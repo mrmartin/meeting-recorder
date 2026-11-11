@@ -33,7 +33,14 @@ Works on any modern Linux desktop (Ubuntu, Fedora, Mint, Arch, …) with PulseAu
 Have a backlog? Tick **Transcribe all** above the list and the app works
 through every untranscribed recording from newest to oldest — including new
 ones as you record them (it politely waits while a recording is running).
-The selection is remembered across app restarts.
+The selection is remembered across app restarts. A recording it has finished
+is never done again, even if you clear the `.transcribe` cache or move, rename
+or delete the transcript; to redo one, use the button on its row.
+
+Recordings go to `~/Recordings`, with each transcript beside its recording. To
+change either, open the gear button and pick a **Recordings** or **Transcripts**
+folder. If a chosen transcripts folder goes missing, such as an unplugged drive,
+**Transcribe all** waits until it is back.
 
 Transcription is local by default, so no audio or text leaves your machine.
 An optional **Cloud** switch uses a separately configured transcription
