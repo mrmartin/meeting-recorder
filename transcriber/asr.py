@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from . import audio
+
+SAMPLE_RATE = 16000
+
 
 def transcribe(wav: Path, speaker: str, cfg: dict, on_progress=None,
                duration: float | None = None) -> list[dict]:
@@ -11,12 +15,19 @@ def transcribe(wav: Path, speaker: str, cfg: dict, on_progress=None,
 
     Heavy import is deferred so the CLI can print help without the venv.
     """
-    from faster_whisper import WhisperModel
+    import numpy as np
 
     a = cfg["asr"]
     model = _get_model(a)
+    # The WAV is already what the model wants, so its samples go in
+    # directly. Passing the path instead would decode it again through
+    # PyAV, whose interface differs between versions.
+    pcm, rate = audio.load_pcm(wav)
+    if rate != SAMPLE_RATE:
+        raise ValueError(f"{wav.name} is {rate} Hz, expected {SAMPLE_RATE}")
+    samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
     segments, info = model.transcribe(
-        str(wav),
+        samples,
         language=a["language"],
         beam_size=a["beam_size"],
         word_timestamps=True,

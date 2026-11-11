@@ -12,7 +12,7 @@ from gi.repository import Gio, GLib, Gtk
 
 from transcriber import cloud
 
-from . import APP_ID, APP_NAME, devices, integration, settings, storage, \
+from . import APP_ID, APP_NAME, integration, settings, storage, \
     transcribe_launcher
 
 CSS = b"""
@@ -146,12 +146,6 @@ class MainWindow(Gtk.ApplicationWindow):
             self.start_recording()
 
     def start_recording(self):
-        if not devices.audio_server_available():
-            self.error_dialog(
-                "No audio output device found.\n"
-                "Check that your sound server (PulseAudio/PipeWire) is running."
-            )
-            return
         try:
             path = storage.new_recording_path()
             self.recorder.start(path)

@@ -11,6 +11,8 @@ import wave
 from array import array
 from pathlib import Path
 
+from . import sysdeps
+
 CHUNK_BYTES = 16 * 1024 * 1024
 
 
@@ -25,6 +27,7 @@ class AudioInfo:
 
 
 def probe(path: Path) -> AudioInfo:
+    sysdeps.require("ffmpeg")
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "a:0",
          "-show_entries", "stream=channels", "-show_entries",
@@ -40,8 +43,12 @@ def probe(path: Path) -> AudioInfo:
 
 def split_stereo(src: Path, left_out: Path, right_out: Path) -> None:
     """Split stereo into two 16 kHz mono WAVs (L=mic/Me, R=system/Them)."""
+    # Channels are picked by position: recordings carry two independent
+    # channels with no declared layout, which some ffmpeg versions refuse
+    # to split by layout name.
     _run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(src),
-          "-filter_complex", "[0:a]channelsplit=channel_layout=stereo[l][r]",
+          "-filter_complex",
+          "[0:a]asplit=2[a][b];[a]pan=mono|c0=c0[l];[b]pan=mono|c0=c1[r]",
           "-map", "[l]", "-ar", "16000", "-c:a", "pcm_s16le", str(left_out),
           "-map", "[r]", "-ar", "16000", "-c:a", "pcm_s16le", str(right_out)])
 
@@ -72,6 +79,14 @@ def _pcm_layout(wav_path: Path) -> tuple[int, int, int]:
                 rate = struct.unpack("<I", fh.read(8)[4:])[0]
                 size -= 8
             fh.seek(size + size % 2, 1)
+
+
+def load_pcm(wav_path: Path) -> tuple[bytes, int]:
+    """(16-bit little-endian samples, sample rate) of a mono WAV."""
+    offset, size, rate = _pcm_layout(wav_path)
+    with open(wav_path, "rb") as fh:
+        fh.seek(offset)
+        return fh.read(size), rate
 
 
 def plan_parts(wav_path: Path, max_s: float,
@@ -129,6 +144,7 @@ def extract_part(wav_path: Path, start_s: float, end_s: float,
 
 
 def _run(cmd: list[str]) -> None:
+    sysdeps.require("ffmpeg")
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"ffmpeg failed: {result.stderr.strip()}")

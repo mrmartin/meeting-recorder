@@ -97,7 +97,18 @@ class GstRecorder:
         bus = self.pipeline.get_bus()
         bus.add_signal_watch()
         bus.connect("message", self._on_bus_message)
-        self.pipeline.set_state(Gst.State.PLAYING)
+        result = self.pipeline.set_state(Gst.State.PLAYING)
+        if result == Gst.StateChangeReturn.FAILURE:
+            message = bus.pop_filtered(Gst.MessageType.ERROR)
+            reason = message.parse_error()[0].message if message else ""
+            bus.remove_signal_watch()
+            self.pipeline.set_state(Gst.State.NULL)
+            self.pipeline = None
+            if os.path.exists(path) and not os.path.getsize(path):
+                os.remove(path)  # nothing was recorded
+            raise RuntimeError(
+                "The sound server did not respond. Check that PulseAudio "
+                f"or PipeWire is running.\n\n{reason}".rstrip())
 
     def stop(self):
         """Stop recording, finalizing the file. Returns the recorded path."""

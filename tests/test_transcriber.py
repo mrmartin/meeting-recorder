@@ -9,7 +9,8 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
-from transcriber import config, merge, render  # noqa: E402
+from transcriber import audio, bootstrap, config, merge, render, \
+    sysdeps  # noqa: E402
 
 
 def seg(speaker, start, end, text, **kw):
@@ -104,6 +105,52 @@ def test_render():
     assert "**[00:00:10] Them:** Great." in md
     assert "2 min 5 s" in md
 
+
+def test_load_pcm():
+    import tempfile
+    import wave
+    with tempfile.TemporaryDirectory() as tmp:
+        path = pathlib.Path(tmp) / "x.wav"
+        with wave.open(str(path), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(16000)
+            wav.writeframes(b"\x01\x00\x02\x00\x03\x00")
+        assert audio.load_pcm(path) == (b"\x01\x00\x02\x00\x03\x00", 16000)
+
+
+def test_missing_system_packages_name_the_command():
+    checks, which = sysdeps.CHECKS, sysdeps.shutil.which
+    try:
+        sysdeps.CHECKS = {"ffmpeg": lambda: False, "venv": lambda: False}
+        sysdeps.shutil.which = lambda tool: tool == "apt"
+        try:
+            sysdeps.require("venv", "ffmpeg")
+            raise AssertionError("missing packages were not reported")
+        except RuntimeError as exc:
+            assert "sudo apt install python3-venv ffmpeg" in str(exc)
+        # A package manager with no name for the missing part gets no command.
+        sysdeps.shutil.which = lambda tool: tool == "dnf"
+        try:
+            sysdeps.require("venv")
+            raise AssertionError("missing package was not reported")
+        except RuntimeError as exc:
+            assert "sudo" not in str(exc)
+        sysdeps.CHECKS = {"ffmpeg": lambda: True, "venv": lambda: True}
+        sysdeps.require("venv", "ffmpeg")
+    finally:
+        sysdeps.CHECKS, sysdeps.shutil.which = checks, which
+
+
+def test_setup_failure_messages():
+    offline = bootstrap._failure("speech recognition", "NewConnectionError: x")
+    assert "internet connection" in offline
+    for pip_output in ("ERROR: No matching distribution found for x",
+                       "ERROR: ResolutionImpossible: for help visit"):
+        too_new = bootstrap._failure("speech recognition", pip_output)
+        assert "no build for Python" in too_new
+    other = bootstrap._failure("speech recognition", "disk full")
+    assert other.endswith("disk full")
 
 if __name__ == "__main__":
     failures = 0

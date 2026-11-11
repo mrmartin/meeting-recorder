@@ -42,6 +42,10 @@ class ParecordRecorder:
     def start(self, path) -> None:
         if self.procs:
             raise RuntimeError("already recording")
+        if not devices.audio_server_available():
+            raise RuntimeError(
+                "No audio output device found. Check that PulseAudio or "
+                "PipeWire is running.")
         self.path = Path(path)
         self.tmpdir = tempfile.TemporaryDirectory(prefix="meeting-rec-")
         base = ["parecord", "--rate=48000", "--channels=1",

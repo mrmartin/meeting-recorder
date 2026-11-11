@@ -45,7 +45,11 @@ everyone's consent.
    (or in a terminal: `chmod +x MeetingRecorder-x86_64.AppImage`)
 3. Double-click it to start. The app adds itself to your applications menu, so next time just search for "Meeting Recorder".
 
-Made for Linux desktops with PulseAudio or PipeWire, and used daily on Ubuntu. No root, no packages, no account. In the rare case something is missing, the app tells you the exact command to install it.
+Made for Linux desktops with PulseAudio or PipeWire. Checked on Ubuntu 22.04 and 24.04, Debian 13 and Arch. No account needed.
+
+If your system lacks a standard package the app needs, it shows the exact command to install it. On Ubuntu and Debian that happens the first time you transcribe: `sudo apt install python3-venv ffmpeg`.
+
+On Fedora 45, recording works, but transcription on your own computer has to wait until the speech-recognition components support its Python 3.15.
 
 ## How to use
 
@@ -130,6 +134,7 @@ Useful settings: `--set merge.pause_split_s=0` (disable pause splitting),
 ./run.sh                                  # run from source
 python3 tests/test_transcriber.py         # transcription unit tests
 python3 tests/test_cloud.py               # cloud tests (localhost only)
+python3 tests/test_fresh_install.py       # first-time setup + a real transcription (needs ffmpeg, espeak-ng, internet)
 /usr/bin/python3 -m meeting_recorder.recorder   # 5s headless recording smoke test
 packaging/build-appimage.sh               # build the AppImage
 ```
