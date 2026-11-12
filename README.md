@@ -55,7 +55,7 @@ On Fedora 45, recording works, but transcription on your own computer has to wai
 
 1. **Before your meeting**, open Meeting Recorder and press **● Record**. The level bars confirm both your mic and the meeting audio are being captured, and you can watch the file grow while recording.
 2. **After the meeting**, press **■ Stop**. The recording appears in the list (`~/Recordings/meeting_YYYY-MM-DD_HH-MM.ogg`) and plays in any audio player.
-3. Press **Transcribe** next to a recording. The first time, the app offers a one-time download of the speech-recognition components (~1.5 GB, all local). When it finishes, a document icon appears — click it to read your transcript.
+3. Press **Transcribe** next to a recording. The first time, the app offers a one-time download of the speech-recognition components (about 2 GB, all local). When it finishes, a document icon appears — click it to read your transcript.
 
 Have a backlog? Tick **Transcribe all** above the list and the app works
 through every untranscribed recording from newest to oldest — including new
@@ -90,7 +90,7 @@ two `parecord` processes joined with `ffmpeg` at stop time (level meters are
 hidden in that mode).
 
 **Transcription.** The `transcriber/` package runs in a dedicated venv
-(`~/.local/share/meeting-recorder/venv`, created on first use, ~1.5 GB with
+(`~/.local/share/meeting-recorder/venv`, created on first use, about 2 GB with
 the model — CPU-only, no CUDA, no torch). Each channel is transcribed
 separately with faster-whisper (large-v3-turbo), echo of the speakers picked
 up by the mic is removed by text-similarity dedup against the system channel,

@@ -595,7 +595,7 @@ class MainWindow(Gtk.ApplicationWindow):
                 buttons=Gtk.ButtonsType.OK_CANCEL,
                 text="Set up transcription?",
                 secondary_text="The first transcription downloads the "
-                "speech-recognition components and model (~1.5 GB, one "
+                "speech-recognition components and model (about 2 GB, one "
                 "time). Everything runs locally on this computer.",
             )
             response = dialog.run()
